@@ -117,18 +117,19 @@ void ApplicationManager::process_network_message(const std::string& message) {
         
         // Parse room name if present
         size_t pos = message.find("JOINED_ROOM:");
+        std::string room_name;
         if (pos != std::string::npos) {
             size_t start = pos + 12;  // Length of "JOINED_ROOM:"
             size_t end = message.find('\n', start);
             if (end != std::string::npos) {
-                std::string room_name = message.substr(start, end - start);
+                room_name = message.substr(start, end - start);
                 state_.set_current_room(room_name);
             }
         }
         
         state_.set_screen(ApplicationState::Screen::CHATROOM);
         state_.clear_chat_messages();
-        ui_commands_.push(UICommand(UICommandType::SHOW_CHATROOM));
+        ui_commands_.push(UICommand(UICommandType::SHOW_CHATROOM, room_name));
     }
     
     if (message.find("LEFT_ROOM") != std::string::npos) {
@@ -164,6 +165,22 @@ void ApplicationManager::process_network_message(const std::string& message) {
                 ui_commands_.push(UICommand(UICommandType::ADD_CHAT_MESSAGE, 
                     ChatMessageData{chat_msg}));
             }
+        }
+    }
+    
+    // Handle broadcast messages (from server) - find ALL occurrences
+    size_t pos = 0;
+    while ((pos = message.find("BROADCAST:", pos)) != std::string::npos) {
+        size_t start = pos + 10;  // Length of "BROADCAST:"
+        size_t end = message.find('\n', start);
+        if (end != std::string::npos) {
+            std::string chat_msg = message.substr(start, end - start);
+            state_.add_chat_message(chat_msg);
+            ui_commands_.push(UICommand(UICommandType::ADD_CHAT_MESSAGE, 
+                ChatMessageData{chat_msg}));
+            pos = end + 1;  // Move past this message
+        } else {
+            break;  // No complete message found
         }
     }
     
@@ -221,6 +238,15 @@ void ApplicationManager::process_input_event(const std::string& event) {
     }
     else if (event_type == "CHAT_MESSAGE") {
         // CHAT_MESSAGE:message text
+        // Format our own message with [You] prefix
+        std::string formatted_msg = "[You] " + event_data;
+        
+        // Add to local chat immediately (server won't echo back to us)
+        state_.add_chat_message(formatted_msg);
+        ui_commands_.push(UICommand(UICommandType::ADD_CHAT_MESSAGE, 
+            ChatMessageData{formatted_msg}));
+        
+        // Send to server
         network_outbound_.push(event_data + "\n");
     }
 }

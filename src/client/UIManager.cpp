@@ -83,7 +83,7 @@ void UIManager::run() {
         poll_input();
         render();
         
-        std::this_thread::sleep_for(50ms);  // ~20 FPS
+        std::this_thread::sleep_for(100ms);  // ~10 FPS, reduces flicker
     }
     
     cleanup_ncurses();
@@ -115,6 +115,9 @@ void UIManager::process_commands() {
                 current_screen_ = Screen::CHATROOM;
                 setup_chat_windows();
                 input_buffer_.clear();
+                if (cmd.has_data()) {
+                    current_room_ = cmd.get<std::string>();
+                }
                 break;
                 
             case UICommandType::UPDATE_ROOM_LIST:
@@ -211,12 +214,15 @@ void UIManager::handle_foyer_input(int ch) {
             selected_room_index_++;
         }
     } else if (ch == '\n') {
-        if (selected_room_index_ >= 0 && selected_room_index_ < static_cast<int>(rooms_.size())) {
-            input_events_.push("ROOM_SELECTED:" + rooms_[selected_room_index_].name);
-        } else if (!input_buffer_.empty()) {
+        // Check if user is typing a room name first
+        if (!input_buffer_.empty()) {
             // Create new room
             input_events_.push("CREATE_ROOM:" + input_buffer_);
             input_buffer_.clear();
+            status_message_.clear();
+        } else if (selected_room_index_ >= 0 && selected_room_index_ < static_cast<int>(rooms_.size())) {
+            // Join selected room
+            input_events_.push("ROOM_SELECTED:" + rooms_[selected_room_index_].name);
         }
     } else if (ch == 'c' || ch == 'C') {
         // Start creating a room (just a visual cue)
@@ -226,6 +232,8 @@ void UIManager::handle_foyer_input(int ch) {
     } else if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
         if (!input_buffer_.empty()) {
             input_buffer_.pop_back();
+        } else {
+            status_message_.clear();  // Clear prompt if backspace on empty
         }
     } else if (ch >= 32 && ch < 127) {
         input_buffer_ += static_cast<char>(ch);
@@ -254,8 +262,6 @@ void UIManager::handle_chatroom_input(int ch) {
 }
 
 void UIManager::render() {
-    clear();
-    
     switch (current_screen_) {
         case Screen::LOGIN:
             render_login();
@@ -276,21 +282,25 @@ void UIManager::render() {
         mvprintw(max_y - 1, 0, "ERROR: %s", error_message_.c_str());
         attroff(A_REVERSE);
         error_message_.clear();  // Clear after showing once
+        wnoutrefresh(stdscr);
     }
     
-    refresh();
+    // Update physical screen once (double buffering)
+    doupdate();
 }
 
 void UIManager::render_login() {
+    werase(stdscr);
+    
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
     
     int y = max_y / 2 - 3;
     int x = max_x / 2 - 15;
     
-    mvprintw(y, x, "╔════════════════════════════╗");
-    mvprintw(y + 1, x, "║      Chat Client Login     ║");
-    mvprintw(y + 2, x, "╚════════════════════════════╝");
+    mvprintw(y, x, "+============================+");
+    mvprintw(y + 1, x, "|      Chat Client Login     |");
+    mvprintw(y + 2, x, "+============================+");
     
     mvprintw(y + 4, x, "Enter your name:");
     mvprintw(y + 5, x, "> %s", input_buffer_.c_str());
@@ -300,15 +310,18 @@ void UIManager::render_login() {
     // Show cursor at input position
     move(y + 5, x + 2 + input_buffer_.length());
     curs_set(1);
+    
+    wnoutrefresh(stdscr);
 }
 
 void UIManager::render_foyer() {
+    werase(stdscr);
     curs_set(0);  // Hide cursor
     
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
     
-    mvprintw(0, 0, "╔═══ FOYER ═══╗");
+    mvprintw(0, 0, "+=== FOYER ===+");
     mvprintw(1, 0, "Available Rooms:");
     
     if (rooms_.empty()) {
@@ -329,14 +342,16 @@ void UIManager::render_foyer() {
     }
     
     int help_y = max_y - 4;
-    mvprintw(help_y, 0, "────────────────────────────");
-    mvprintw(help_y + 1, 0, "↑/↓: Navigate | Enter: Join | c: Create room");
+    mvprintw(help_y, 0, "----------------------------");
+    mvprintw(help_y + 1, 0, "Up/Down: Navigate | Enter: Join | c: Create room");
     
     if (!input_buffer_.empty() || !status_message_.empty()) {
         mvprintw(help_y + 2, 0, "%s%s", status_message_.c_str(), input_buffer_.c_str());
     }
     
     mvprintw(help_y + 3, 0, "q: Quit");
+    
+    wnoutrefresh(stdscr);
 }
 
 void UIManager::render_chatroom() {
@@ -367,14 +382,14 @@ void UIManager::render_chatroom() {
                   chat_messages_[i].c_str());
     }
     
-    wrefresh(chat_win_);
+    wnoutrefresh(chat_win_);
     
     // Render input window
     werase(input_win_);
     box(input_win_, 0, 0);
     mvwprintw(input_win_, 0, 2, " Input ");
     mvwprintw(input_win_, 1, 1, "> %s", input_buffer_.c_str());
-    wrefresh(input_win_);
+    wnoutrefresh(input_win_);
     
     // Show cursor at input position
     int input_y, input_x;

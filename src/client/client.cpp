@@ -9,13 +9,28 @@
 #include <iostream>
 #include <memory>
 #include <csignal>
+#include <chrono>
+#include <thread>
 
-// Global pointer for signal handling
+// Global pointers for signal handling
 UIManager* g_ui_manager = nullptr;
+NetworkManager* g_network_manager = nullptr;
+ThreadSafeQueue<std::string>* g_network_outbound = nullptr;
 
 void signal_handler(int signal) {
-    if (signal == SIGINT && g_ui_manager) {
-        g_ui_manager->stop();
+    if (signal == SIGINT) {
+        // Send quit command to server before exiting
+        if (g_network_outbound) {
+            g_network_outbound->push("/quit\n");
+        }
+        
+        // Give a moment for the message to send
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        
+        // Stop UI
+        if (g_ui_manager) {
+            g_ui_manager->stop();
+        }
     }
 }
 
@@ -35,6 +50,8 @@ int main() {
         
         // Set up signal handler
         g_ui_manager = &ui;
+        g_network_manager = &network;
+        g_network_outbound = &network_outbound;
         std::signal(SIGINT, signal_handler);
         
         // Connect to server
@@ -50,6 +67,12 @@ int main() {
         
         // Run UI on main thread (blocks until quit)
         ui.run();
+        
+        // Send quit to server if we're still connected
+        if (network.is_connected()) {
+            network_outbound.push("/quit\n");
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
         
         // Clean shutdown
         application.stop();
