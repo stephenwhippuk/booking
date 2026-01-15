@@ -6,23 +6,65 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Set source and build directories
 set(SRC_DIR "${CMAKE_SOURCE_DIR}/src")
+set(INCLUDE_DIR "${CMAKE_SOURCE_DIR}/include")
 set(BUILD_DIR "${CMAKE_SOURCE_DIR}/build")
 
 # Set output directory for binaries
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${BUILD_DIR})
 
-# Client executable with UI and connection classes
-add_executable(client 
-    ${SRC_DIR}/client.cpp 
-    ${SRC_DIR}/ChatUI.cpp
-    ${SRC_DIR}/ServerConnection.cpp
+# Enable testing
+enable_testing()
+
+# Fetch Google Test
+include(FetchContent)
+FetchContent_Declare(
+  googletest
+  GIT_REPOSITORY https://github.com/google/googletest.git
+  GIT_TAG v1.14.0
 )
+# For Windows: Prevent overriding the parent project's compiler/linker settings
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(googletest)
+
+# Generate compile_commands.json for IntelliSense
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Client executable (queue-based architecture)
+add_executable(client
+    ${SRC_DIR}/client/client.cpp
+    ${SRC_DIR}/client/NetworkManager.cpp
+    ${SRC_DIR}/client/ApplicationManager.cpp
+    ${SRC_DIR}/client/ApplicationState.cpp
+    ${SRC_DIR}/client/UIManager.cpp
+)
+target_include_directories(client PRIVATE ${INCLUDE_DIR})
 target_link_libraries(client ncurses pthread)
 
 # Server executable with socket and client management classes
 add_executable(server 
-    ${SRC_DIR}/server.cpp
-    ${SRC_DIR}/ServerSocket.cpp
-    ${SRC_DIR}/ClientManager.cpp
+    ${SRC_DIR}/server/server.cpp
+    ${SRC_DIR}/server/ServerSocket.cpp
+    ${SRC_DIR}/server/ClientManager.cpp
+    ${SRC_DIR}/server/ChatRoom.cpp
 )
+target_include_directories(server PRIVATE ${INCLUDE_DIR})
 target_link_libraries(server pthread)
+
+# Test executable
+add_executable(tests
+    tests/ThreadSafeQueueTest.cpp
+    tests/NetworkManagerTest.cpp
+    tests/ApplicationManagerTest.cpp
+    ${SRC_DIR}/client/NetworkManager.cpp
+    ${SRC_DIR}/client/ApplicationManager.cpp
+    ${SRC_DIR}/client/ApplicationState.cpp
+)
+target_include_directories(tests PRIVATE ${INCLUDE_DIR})
+target_link_libraries(tests 
+    GTest::gtest_main
+    pthread
+)
+
+# Register tests with CTest
+include(GoogleTest)
+gtest_discover_tests(tests)

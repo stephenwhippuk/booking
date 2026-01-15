@@ -4,6 +4,7 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <iostream>
 
 ServerConnection::ServerConnection() : sock_(-1) {}
 
@@ -18,19 +19,22 @@ void ServerConnection::receive_loop() {
         
         if (bytes_read <= 0) {
             if (bytes_read == 0 && connected_) {
-                if (message_callback_) {
+                // Only call callback if we're still connected
+                if (message_callback_ && connected_) {
                     message_callback_("Server disconnected");
                 }
             }
             connected_ = false;
-            if (disconnect_callback_) {
+            // Only call disconnect callback if we still have it and we're shutting down
+            if (disconnect_callback_ && !connected_) {
                 disconnect_callback_();
             }
             break;
         }
         
         buffer[bytes_read] = '\0';
-        if (message_callback_) {
+        // Check both callback and connected status before calling
+        if (message_callback_ && connected_) {
             message_callback_(std::string(buffer));
         }
     }
@@ -84,20 +88,42 @@ void ServerConnection::start_receiving(std::function<void(const std::string&)> o
                     std::function<void()> on_disconnect) {
     message_callback_ = on_message;
     disconnect_callback_ = on_disconnect;
+    if (receive_thread_.joinable()) {
+        receive_thread_.join();
+    }
     receive_thread_ = std::thread(&ServerConnection::receive_loop, this);
 }
 
+void ServerConnection::stop_receiving() {
+    // Just signal to stop, don't join here to avoid deadlock
+    // disconnect() will handle the join
+    connected_ = false;
+    message_callback_ = nullptr;
+    disconnect_callback_ = nullptr;
+}
+
 void ServerConnection::disconnect() {
-    if (connected_) {
-        connected_ = false;
+    connected_ = false;
+    
+    // Always shutdown socket to unblock recv(), regardless of connected_ state
+    if (sock_ >= 0) {
         shutdown(sock_, SHUT_RDWR);
-        if (receive_thread_.joinable()) {
-            receive_thread_.join();
-        }
+    }
+    
+    // Join thread to ensure it exits
+    if (receive_thread_.joinable()) {
+        receive_thread_.join();
+    }
+    if (sock_ >= 0) {
         close(sock_);
+        sock_ = -1;
     }
 }
 
 bool ServerConnection::is_connected() const {
     return connected_;
+}
+
+int ServerConnection::get_socket() const {
+    return sock_;
 }

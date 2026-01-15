@@ -26,6 +26,8 @@ public:
     bool send_message(const std::string& message);
     void start_receiving(std::function<void(const std::string&)> on_message,
                         std::function<void()> on_disconnect);
+    void stop_receiving();
     void disconnect();
     bool is_connected() const;
+    int get_socket() const;
 };
