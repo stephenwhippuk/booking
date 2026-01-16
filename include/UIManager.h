@@ -4,6 +4,10 @@
 #include "ThreadSafeQueue.h"
 #include "UICommand.h"
 #include "RoomInfo.h"
+#include <ui/Window.h>
+#include <ui/TextInput.h>
+#include <ui/Menu.h>
+#include <ui/Label.h>
 #include <ncurses.h>
 #include <string>
 #include <vector>
@@ -50,10 +54,14 @@ private:
     std::string input_buffer_;
     int selected_room_index_;
     
-    // ncurses windows
-    WINDOW* chat_win_;
-    WINDOW* input_win_;
-    WINDOW* status_win_;
+    // UI components
+    ui::WindowPtr main_window_;
+    ui::TextInputPtr login_input_;
+    ui::MenuPtr room_menu_;
+    ui::TextInputPtr chat_input_;
+    ui::WindowPtr chat_display_;
+    ui::LabelPtr help_label_;
+    ui::LabelPtr title_label_;
     
     // Thread control
     std::atomic<bool> running_;
@@ -77,9 +85,11 @@ private:
     // Helper methods
     void init_ncurses();
     void cleanup_ncurses();
-    void setup_chat_windows();
-    void clear_windows();
+    void setup_login_ui();
+    void setup_foyer_ui();
+    void setup_chatroom_ui();
     void show_error_popup(const std::string& message);
+    void show_create_room_dialog();
 
 public:
     UIManager(ThreadSafeQueue<UICommand>& ui_commands,

@@ -29,6 +29,9 @@ FetchContent_MakeAvailable(googletest)
 # Generate compile_commands.json for IntelliSense
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Add UI library subdirectory
+add_subdirectory(lib/ui)
+
 # Client executable (queue-based architecture)
 add_executable(client
     ${SRC_DIR}/client/client.cpp
@@ -38,7 +41,7 @@ add_executable(client
     ${SRC_DIR}/client/UIManager.cpp
 )
 target_include_directories(client PRIVATE ${INCLUDE_DIR})
-target_link_libraries(client ncurses pthread)
+target_link_libraries(client ncurses_ui ncurses pthread)
 
 # Server executable with socket and client management classes
 add_executable(server 

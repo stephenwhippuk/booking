@@ -10,9 +10,11 @@ UIManager::UIManager(ThreadSafeQueue<UICommand>& ui_commands,
     , input_events_(input_events)
     , current_screen_(Screen::LOGIN)
     , selected_room_index_(0)
-    , chat_win_(nullptr)
-    , input_win_(nullptr)
-    , status_win_(nullptr)
+    , main_window_(nullptr)
+    , login_input_(nullptr)
+    , room_menu_(nullptr)
+    , chat_input_(nullptr)
+    , chat_display_(nullptr)
     , running_(false)
     , ncurses_initialized_(false)
 {
@@ -38,52 +40,208 @@ void UIManager::init_ncurses() {
 void UIManager::cleanup_ncurses() {
     if (!ncurses_initialized_) return;
     
-    clear_windows();
+    // Clean up UI components
+    login_input_.reset();
+    room_menu_.reset();
+    chat_input_.reset();
+    chat_display_.reset();
+    help_label_.reset();
+    title_label_.reset();
+    main_window_.reset();
+    
     endwin();
     ncurses_initialized_ = false;
 }
 
-void UIManager::clear_windows() {
-    if (chat_win_) {
-        delwin(chat_win_);
-        chat_win_ = nullptr;
+void UIManager::setup_login_ui() {
+    FILE* debug = fopen("/tmp/setup_debug.log", "a");
+    if (debug) {
+        fprintf(debug, "setup_login_ui() starting\n");
+        fclose(debug);
     }
-    if (input_win_) {
-        delwin(input_win_);
-        input_win_ = nullptr;
-    }
-    if (status_win_) {
-        delwin(status_win_);
-        status_win_ = nullptr;
-    }
-}
-
-void UIManager::setup_chat_windows() {
-    clear_windows();
     
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
     
-    int chat_height = max_y - 4;  // Leave room for input and status
-    chat_win_ = newwin(chat_height, max_x, 0, 0);
+    debug = fopen("/tmp/setup_debug.log", "a");
+    if (debug) {
+        fprintf(debug, "Screen size: %dx%d\n", max_x, max_y);
+        fclose(debug);
+    }
     
-    input_win_ = newwin(3, max_x, chat_height, 0);
+    int y = max_y / 2 - 3;
+    int x = max_x / 2 - 20;
+    int width = 40;
     
-    status_win_ = newwin(1, max_x, max_y - 1, 0);
+    debug = fopen("/tmp/setup_debug.log", "a");
+    if (debug) {
+        fprintf(debug, "Creating window at (%d, %d) with width %d\n", x, y, width);
+        fclose(debug);
+    }
     
-    scrollok(chat_win_, TRUE);
+    // Create main window
+    try {
+        main_window_ = std::make_shared<ui::Window>(x, y, width, 10);
+        debug = fopen("/tmp/setup_debug.log", "a");
+        if (debug) {
+            fprintf(debug, "Window created successfully: %p\n", main_window_.get());
+            fclose(debug);
+        }
+    } catch (const std::exception& e) {
+        debug = fopen("/tmp/setup_debug.log", "a");
+        if (debug) {
+            fprintf(debug, "Exception creating window: %s\n", e.what());
+            fclose(debug);
+        }
+        return;
+    }
+    
+    main_window_->set_bordered(true);
+    main_window_->set_title(" Chat Client Login ");
+    
+    // Create text input for username (coordinates relative to window)
+    login_input_ = std::make_shared<ui::TextInput>(2, 3, width - 4);
+    login_input_->set_placeholder("Enter your name...");
+    login_input_->set_label("Username:");
+    login_input_->set_focus(true);
+    
+    // Add help label (coordinates relative to window)
+    help_label_ = std::make_shared<ui::Label>(2, 6, "Press 'q' to quit");
+    help_label_->set_attributes(A_DIM);
+    
+    // Handle Enter key
+    login_input_->set_on_submit([this](const std::string& text) {
+        if (!text.empty()) {
+            input_events_.push("LOGIN:" + text);
+            username_ = text;
+            login_input_->clear();
+        }
+    });
+    
+    main_window_->add_child(login_input_);
+    main_window_->add_child(help_label_);
+}
+
+void UIManager::setup_foyer_ui() {
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    
+    // Create main window
+    main_window_ = std::make_shared<ui::Window>(0, 0, max_x, max_y);
+    main_window_->set_bordered(false);
+    
+    // Create title label
+    title_label_ = std::make_shared<ui::Label>(0, 0, "+=== FOYER ===+");
+    title_label_->set_attributes(A_BOLD);
+    
+    // Create welcome label
+    auto welcome_label = std::make_shared<ui::Label>(0, 1, "Welcome, " + username_ + "!");
+    
+    // Create help label
+    help_label_ = std::make_shared<ui::Label>(0, max_y - 2, max_x, 2,
+        "Up/Down: Navigate | Enter: Join | c: Create Room\nq: Quit");
+    help_label_->set_attributes(A_DIM);
+    
+    // Create room menu
+    room_menu_ = std::make_shared<ui::Menu>(ui::Rect{2, 3, max_x - 4, max_y - 6});
+    room_menu_->set_bordered(true);
+    room_menu_->set_title(" Available Rooms ");
+    room_menu_->set_numbered(false);
+    room_menu_->set_focus(true);
+    
+    // Update menu when rooms change
+    std::vector<ui::MenuItem> menu_items;
+    for (const auto& room : rooms_) {
+        ui::MenuItem item;
+        item.text = room.name + " (" + std::to_string(room.client_count) + " users)";
+        menu_items.push_back(item);
+    }
+    room_menu_->set_items(menu_items);
+    
+    // Handle room activation
+    room_menu_->set_on_activate([this](size_t index, const ui::MenuItem& item) {
+        if (index < rooms_.size()) {
+            input_events_.push("ROOM_SELECTED:" + rooms_[index].name);
+        }
+    });
+    
+    main_window_->add_child(title_label_);
+    main_window_->add_child(welcome_label);
+    main_window_->add_child(room_menu_);
+    main_window_->add_child(help_label_);
+}
+
+void UIManager::setup_chatroom_ui() {
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    
+    // Create main window
+    main_window_ = std::make_shared<ui::Window>(0, 0, max_x, max_y);
+    main_window_->set_bordered(false);
+    
+    // Create chat display window
+    chat_display_ = std::make_shared<ui::Window>(0, 0, max_x, max_y - 3);
+    chat_display_->set_bordered(true);
+    chat_display_->set_title(" " + current_room_ + " ");
+    
+    // Create chat input (coordinates relative to main window)
+    chat_input_ = std::make_shared<ui::TextInput>(1, max_y - 3, max_x - 2);
+    chat_input_->set_label(">");
+    chat_input_->set_focus(true);
+    
+    // Handle Enter key
+    chat_input_->set_on_submit([this](const std::string& text) {
+        if (!text.empty()) {
+            if (text == "/leave") {
+                input_events_.push("LEAVE");
+            } else if (text == "/quit") {
+                input_events_.push("QUIT");
+            } else {
+                input_events_.push("CHAT_MESSAGE:" + text);
+            }
+            chat_input_->clear();
+        }
+    });
+    
+    main_window_->add_child(chat_display_);
+    main_window_->add_child(chat_input_);
 }
 
 void UIManager::run() {
+    FILE* debug = fopen("/tmp/ui_run_debug.log", "a");
+    if (debug) {
+        fprintf(debug, "UIManager::run() started\n");
+        fclose(debug);
+    }
+    
     init_ncurses();
+    
+    debug = fopen("/tmp/ui_run_debug.log", "a");
+    if (debug) {
+        fprintf(debug, "ncurses initialized\n");
+        fclose(debug);
+    }
+    
     running_ = true;
     
     while (running_) {
+        debug = fopen("/tmp/ui_run_debug.log", "a");
+        if (debug) {
+            fprintf(debug, "Loop iteration: current_screen_=%d\n", static_cast<int>(current_screen_));
+            fclose(debug);
+        }
+        
         process_commands();
         poll_input();
         render();
         
         std::this_thread::sleep_for(100ms);  // ~10 FPS, reduces flicker
+    }
+    
+    debug = fopen("/tmp/ui_run_debug.log", "a");
+    if (debug) {
+        fprintf(debug, "Exited main loop, cleaning up\n");
+        fclose(debug);
     }
     
     cleanup_ncurses();
@@ -103,21 +261,23 @@ void UIManager::process_commands() {
                 current_screen_ = Screen::LOGIN;
                 input_buffer_.clear();
                 error_message_.clear();
+                setup_login_ui();
                 break;
                 
             case UICommandType::SHOW_FOYER:
                 current_screen_ = Screen::FOYER;
                 selected_room_index_ = 0;
                 input_buffer_.clear();
+                setup_foyer_ui();
                 break;
                 
             case UICommandType::SHOW_CHATROOM:
                 current_screen_ = Screen::CHATROOM;
-                setup_chat_windows();
                 input_buffer_.clear();
                 if (cmd.has_data()) {
                     current_room_ = cmd.get<std::string>();
                 }
+                setup_chatroom_ui();
                 break;
                 
             case UICommandType::UPDATE_ROOM_LIST:
@@ -126,6 +286,16 @@ void UIManager::process_commands() {
                     // Keep selected index in bounds
                     if (selected_room_index_ >= static_cast<int>(rooms_.size())) {
                         selected_room_index_ = std::max(0, static_cast<int>(rooms_.size()) - 1);
+                    }
+                    // Update menu if it exists
+                    if (room_menu_) {
+                        std::vector<ui::MenuItem> menu_items;
+                        for (const auto& room : rooms_) {
+                            ui::MenuItem item;
+                            item.text = room.name + " (" + std::to_string(room.client_count) + " users)";
+                            menu_items.push_back(item);
+                        }
+                        room_menu_->set_items(menu_items);
                     }
                 }
                 break;
@@ -156,6 +326,8 @@ void UIManager::process_commands() {
                 
             case UICommandType::CLEAR_INPUT:
                 input_buffer_.clear();
+                if (login_input_) login_input_->clear();
+                if (chat_input_) chat_input_->clear();
                 break;
                 
             case UICommandType::QUIT:
@@ -169,105 +341,48 @@ void UIManager::poll_input() {
     int ch = getch();
     if (ch == ERR) return;  // No input
     
-    switch (current_screen_) {
-        case Screen::LOGIN:
-            handle_login_input(ch);
-            break;
-        case Screen::FOYER:
-            handle_foyer_input(ch);
-            break;
-        case Screen::CHATROOM:
-            handle_chatroom_input(ch);
-            break;
-    }
-}
-
-void UIManager::handle_login_input(int ch) {
-    if (ch == '\n') {
-        if (!input_buffer_.empty()) {
-            input_events_.push("LOGIN:" + input_buffer_);
-            username_ = input_buffer_;
-            input_buffer_.clear();
-        }
-    } else if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
-        if (!input_buffer_.empty()) {
-            input_buffer_.pop_back();
-        }
-    } else if (ch == 'q' || ch == 'Q') {
-        if (input_buffer_.empty()) {  // Only quit if not typing
+    // Create event for components
+    ui::Event event;
+    event.type = ui::EventType::KEY_PRESS;
+    event.key = ch;
+    
+    // Handle quit on any screen
+    if (ch == 'q' || ch == 'Q') {
+        if (current_screen_ == Screen::LOGIN && login_input_ && login_input_->get_text().empty()) {
             input_events_.push("QUIT");
-        } else {
-            input_buffer_ += ch;
+            return;
+        } else if (current_screen_ == Screen::FOYER) {
+            input_events_.push("QUIT");
+            return;
         }
-    } else if (ch >= 32 && ch < 127) {  // Printable characters
-        input_buffer_ += static_cast<char>(ch);
     }
-}
-
-void UIManager::handle_foyer_input(int ch) {
-    if (ch == KEY_UP) {
-        if (selected_room_index_ > 0) {
-            selected_room_index_--;
-        }
-    } else if (ch == KEY_DOWN) {
-        if (selected_room_index_ < static_cast<int>(rooms_.size()) - 1) {
-            selected_room_index_++;
-        }
-    } else if (ch == '\n') {
-        // Check if user is typing a room name first
-        if (!input_buffer_.empty()) {
-            // Create new room
-            input_events_.push("CREATE_ROOM:" + input_buffer_);
-            input_buffer_.clear();
-            status_message_.clear();
-        } else if (selected_room_index_ >= 0 && selected_room_index_ < static_cast<int>(rooms_.size())) {
-            // Join selected room
-            input_events_.push("ROOM_SELECTED:" + rooms_[selected_room_index_].name);
-        }
-    } else if (ch == 'c' || ch == 'C') {
-        // Start creating a room (just a visual cue)
-        status_message_ = "Enter room name: ";
-    } else if (ch == 'q' || ch == 'Q') {
-        input_events_.push("QUIT");
-    } else if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
-        if (!input_buffer_.empty()) {
-            input_buffer_.pop_back();
-        } else {
-            status_message_.clear();  // Clear prompt if backspace on empty
-        }
-    } else if (ch >= 32 && ch < 127) {
-        input_buffer_ += static_cast<char>(ch);
+    
+    // Handle create room in foyer
+    if ((ch == 'c' || ch == 'C') && current_screen_ == Screen::FOYER) {
+        show_create_room_dialog();
+        return;
     }
-}
-
-void UIManager::handle_chatroom_input(int ch) {
-    if (ch == '\n') {
-        if (!input_buffer_.empty()) {
-            if (input_buffer_ == "/leave") {
-                input_events_.push("LEAVE");
-            } else if (input_buffer_ == "/quit") {
-                input_events_.push("QUIT");
-            } else {
-                input_events_.push("CHAT_MESSAGE:" + input_buffer_);
-            }
-            input_buffer_.clear();
-        }
-    } else if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
-        if (!input_buffer_.empty()) {
-            input_buffer_.pop_back();
-        }
-    } else if (ch >= 32 && ch < 127) {
-        input_buffer_ += static_cast<char>(ch);
+    
+    // Forward to main window (which forwards to focused child)
+    if (main_window_) {
+        main_window_->handle_event(event);
     }
 }
 
 void UIManager::render() {
+    // Clear stdscr without refreshing
+    werase(stdscr);
+    
     switch (current_screen_) {
         case Screen::LOGIN:
+            // For login, stage stdscr first so window appears on top
+            wnoutrefresh(stdscr);
             render_login();
             break;
         case Screen::FOYER:
             render_foyer();
+            // For foyer, stage stdscr after children have drawn to it
+            wnoutrefresh(stdscr);
             break;
         case Screen::CHATROOM:
             render_chatroom();
@@ -290,112 +405,133 @@ void UIManager::render() {
 }
 
 void UIManager::render_login() {
-    werase(stdscr);
+    if (!main_window_) {
+        setup_login_ui();
+    }
     
-    int max_y, max_x;
-    getmaxyx(stdscr, max_y, max_x);
-    
-    int y = max_y / 2 - 3;
-    int x = max_x / 2 - 15;
-    
-    mvprintw(y, x, "+============================+");
-    mvprintw(y + 1, x, "|      Chat Client Login     |");
-    mvprintw(y + 2, x, "+============================+");
-    
-    mvprintw(y + 4, x, "Enter your name:");
-    mvprintw(y + 5, x, "> %s", input_buffer_.c_str());
-    
-    mvprintw(y + 7, x, "Press 'q' to quit");
-    
-    // Show cursor at input position
-    move(y + 5, x + 2 + input_buffer_.length());
-    curs_set(1);
-    
-    wnoutrefresh(stdscr);
+    // Render the UI components
+    if (main_window_) {
+        WINDOW* win = main_window_->get_window();
+        
+        if (win && win != stdscr) {
+            werase(win);
+            if (main_window_->is_bordered()) {
+                box(win, 0, 0);
+                std::string title = main_window_->get_title();
+                if (!title.empty()) {
+                    mvwprintw(win, 0, 2, "%s", title.c_str());
+                }
+            }
+            
+            // Manually render children
+            if (login_input_) {
+                login_input_->render(win);
+            }
+            if (help_label_) {
+                help_label_->render(win);
+            }
+            
+            // Position cursor BEFORE wnoutrefresh if TextInput is focused
+            if (login_input_ && login_input_->has_focus()) {
+                int cursor_x = login_input_->get_bounds().left() + 
+                              login_input_->get_label().length() + 1 +
+                              login_input_->get_cursor_pos();
+                int cursor_y = login_input_->get_bounds().top();
+                wmove(win, cursor_y, cursor_x);
+                curs_set(1);  // Show cursor
+            } else {
+                curs_set(0);  // Hide cursor
+            }
+            
+            // CRITICAL: Mark window as changed and move it to the front
+            touchwin(win);
+            wnoutrefresh(win);
+        }
+    }
 }
 
 void UIManager::render_foyer() {
-    werase(stdscr);
-    curs_set(0);  // Hide cursor
+    if (!main_window_) {
+        setup_foyer_ui();
+    }
     
-    int max_y, max_x;
-    getmaxyx(stdscr, max_y, max_x);
-    
-    mvprintw(0, 0, "+=== FOYER ===+");
-    mvprintw(1, 0, "Available Rooms:");
-    
-    if (rooms_.empty()) {
-        mvprintw(3, 2, "No rooms available. Press 'c' to create one.");
-    } else {
-        int y = 3;
-        for (size_t i = 0; i < rooms_.size() && y < max_y - 5; ++i) {
-            if (static_cast<int>(i) == selected_room_index_) {
-                attron(A_REVERSE);
+    // Render all children directly to stdscr (main_window is fullscreen, no border)
+    if (main_window_) {
+        for (const auto& child : main_window_->get_children()) {
+            if (!child || !child->is_visible()) continue;
+            
+            auto label = std::dynamic_pointer_cast<ui::Label>(child);
+            if (label) {
+                label->render(stdscr);
+                continue;
             }
-            mvprintw(y++, 2, "%s (%d users)", 
-                     rooms_[i].name.c_str(), 
-                     rooms_[i].client_count);
-            if (static_cast<int>(i) == selected_room_index_) {
-                attroff(A_REVERSE);
+            
+            auto menu = std::dynamic_pointer_cast<ui::Menu>(child);
+            if (menu) {
+                menu->render(stdscr);
+                continue;
             }
         }
     }
-    
-    int help_y = max_y - 4;
-    mvprintw(help_y, 0, "----------------------------");
-    mvprintw(help_y + 1, 0, "Up/Down: Navigate | Enter: Join | c: Create room");
-    
-    if (!input_buffer_.empty() || !status_message_.empty()) {
-        mvprintw(help_y + 2, 0, "%s%s", status_message_.c_str(), input_buffer_.c_str());
-    }
-    
-    mvprintw(help_y + 3, 0, "q: Quit");
-    
-    wnoutrefresh(stdscr);
 }
 
 void UIManager::render_chatroom() {
-    if (!chat_win_ || !input_win_) {
-        setup_chat_windows();
+    if (!main_window_) {
+        setup_chatroom_ui();
     }
     
-    // Render chat window
-    werase(chat_win_);
-    box(chat_win_, 0, 0);
-    
-    if (!current_room_.empty()) {
-        mvwprintw(chat_win_, 0, 2, " %s ", current_room_.c_str());
+    // Render chat input to stdscr first
+    if (chat_input_) {
+        chat_input_->render(stdscr);
     }
     
-    int chat_height, chat_width;
-    getmaxyx(chat_win_, chat_height, chat_width);
+    // Stage stdscr as background
+    wnoutrefresh(stdscr);
     
-    // Show last N messages that fit
-    int start_idx = chat_messages_.size() > (size_t)(chat_height - 2)
-        ? chat_messages_.size() - (chat_height - 2)
-        : 0;
-    
-    int y = 1;
-    for (size_t i = start_idx; i < chat_messages_.size() && y < chat_height - 1; ++i) {
-        mvwprintw(chat_win_, y++, 1, "%.*s", 
-                  chat_width - 2, 
-                  chat_messages_[i].c_str());
+    // Render chat messages in chat_display window (overlays stdscr)
+    if (chat_display_) {
+        WINDOW* win = chat_display_->get_window();
+        if (win) {
+            werase(win);
+            
+            // Draw border
+            box(win, 0, 0);
+            if (!current_room_.empty()) {
+                mvwprintw(win, 0, 2, " %s ", current_room_.c_str());
+            }
+            
+            int chat_height, chat_width;
+            getmaxyx(win, chat_height, chat_width);
+            
+            // Show last N messages that fit
+            int start_idx = chat_messages_.size() > (size_t)(chat_height - 2)
+                ? chat_messages_.size() - (chat_height - 2)
+                : 0;
+            
+            int y = 1;
+            for (size_t i = start_idx; i < chat_messages_.size() && y < chat_height - 1; ++i) {
+                mvwprintw(win, y++, 1, "%.*s", 
+                          chat_width - 2, 
+                          chat_messages_[i].c_str());
+            }
+            
+            touchwin(win);
+            wnoutrefresh(win);
+        }
     }
     
-    wnoutrefresh(chat_win_);
-    
-    // Render input window
-    werase(input_win_);
-    box(input_win_, 0, 0);
-    mvwprintw(input_win_, 0, 2, " Input ");
-    mvwprintw(input_win_, 1, 1, "> %s", input_buffer_.c_str());
-    wnoutrefresh(input_win_);
-    
-    // Show cursor at input position
-    int input_y, input_x;
-    getbegyx(input_win_, input_y, input_x);
-    move(input_y + 1, input_x + 3 + input_buffer_.length());
-    curs_set(1);
+    // Position cursor AFTER all windows staged, then re-stage stdscr
+    if (chat_input_ && chat_input_->has_focus()) {
+        int cursor_x = chat_input_->get_bounds().left() + 
+                      chat_input_->get_label().length() + 1 +
+                      (chat_input_->get_cursor_pos() - chat_input_->get_scroll_offset());
+        int cursor_y = chat_input_->get_bounds().top();
+        wmove(stdscr, cursor_y, cursor_x);
+        curs_set(1);  // Show cursor
+        wnoutrefresh(stdscr);  // Re-stage stdscr with correct cursor position
+    } else {
+        curs_set(0);  // Hide cursor
+    }
 }
 
 void UIManager::show_error_popup(const std::string& message) {
@@ -420,4 +556,60 @@ void UIManager::show_error_popup(const std::string& message) {
     nodelay(stdscr, TRUE);
     
     delwin(popup);
+}
+
+void UIManager::show_create_room_dialog() {
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    
+    int popup_height = 9;
+    int popup_width = std::min(50, max_x - 4);
+    int popup_y = (max_y - popup_height) / 2;
+    int popup_x = (max_x - popup_width) / 2;
+    
+    WINDOW* popup = newwin(popup_height, popup_width, popup_y, popup_x);
+    
+    std::string room_name;
+    bool done = false;
+    
+    nodelay(stdscr, FALSE);  // Blocking input for dialog
+    curs_set(1);  // Show cursor
+    
+    while (!done) {
+        werase(popup);
+        box(popup, 0, 0);
+        mvwprintw(popup, 0, 2, " Create New Room ");
+        mvwprintw(popup, 2, 2, "Room name:");
+        mvwprintw(popup, 3, 2, "%.*s", popup_width - 4, room_name.c_str());
+        mvwprintw(popup, 5, 2, "Enter: Create | Esc: Cancel");
+        
+        // Position cursor
+        wmove(popup, 3, 2 + room_name.length());
+        wrefresh(popup);
+        
+        int ch = wgetch(popup);
+        
+        if (ch == 27) {  // ESC
+            done = true;
+        } else if (ch == '\n' || ch == KEY_ENTER) {
+            if (!room_name.empty()) {
+                input_events_.push("CREATE_ROOM:" + room_name);
+                done = true;
+            }
+        } else if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
+            if (!room_name.empty()) {
+                room_name.pop_back();
+            }
+        } else if (ch >= 32 && ch < 127 && room_name.length() < 30) {
+            room_name += static_cast<char>(ch);
+        }
+    }
+    
+    nodelay(stdscr, TRUE);  // Non-blocking again
+    curs_set(0);  // Hide cursor
+    delwin(popup);
+    
+    // Force full redraw
+    clear();
+    refresh();
 }
