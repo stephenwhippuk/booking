@@ -1,7 +1,11 @@
 #include "ui/Window.h"
 #include "ui/TextInput.h"
 #include "ui/Menu.h"
+#include "ui/Label.h"
 #include <algorithm>
+#include <fcntl.h>
+#include <unistd.h>
+#include <cstring>
 
 namespace ui {
 
@@ -12,7 +16,6 @@ Window::Window(int x, int y, int width, int height)
     bounds_ = Rect(x, y, width, height);
     window_ = newwin(height, width, y, x);
     if (!window_) {
-        // Handle error - could throw or set error flag
         window_ = stdscr;  // Fallback to standard screen
     }
 }
@@ -206,8 +209,37 @@ void Window::focus_previous_child() {
 }
 
 void Window::render() {
+    // Try direct printw to stdscr - this should show on screen
+    printw("WINDOW_RENDER_CALLED!");
+    refresh();
+    
+    // FIRST THING - open and write to file before ANY other code
+    int fd = open("/tmp/window_render_called.txt", O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd >= 0) {
+        const char* msg = "Window::render() ENTERED\n";
+        write(fd, msg, strlen(msg));
+        close(fd);
+    }
+    
+    FILE* debug = fopen("/tmp/window_render_main.log", "a");
+    if (debug) {
+        fprintf(debug, "Window::render() called: visible_=%d, window_=%p\n", visible_, window_);
+        fclose(debug);
+    }
+    
     if (!visible_ || !window_) {
+        debug = fopen("/tmp/window_render_main.log", "a");
+        if (debug) {
+            fprintf(debug, "  Early return: not visible or no window\n");
+            fclose(debug);
+        }
         return;
+    }
+    
+    debug = fopen("/tmp/window_render_main.log", "a");
+    if (debug) {
+        fprintf(debug, "  About to erase\n");
+        fclose(debug);
     }
     
     // Erase previous content
@@ -215,11 +247,28 @@ void Window::render() {
     
     // Draw border if enabled
     if (bordered_) {
+        debug = fopen("/tmp/window_render_main.log", "a");
+        if (debug) {
+            fprintf(debug, "  Drawing border\n");
+            fclose(debug);
+        }
         draw_border();
+    }
+    
+    debug = fopen("/tmp/window_render_main.log", "a");
+    if (debug) {
+        fprintf(debug, "  About to render_children\n");
+        fclose(debug);
     }
     
     // Render children
     render_children();
+    
+    debug = fopen("/tmp/window_render_main.log", "a");
+    if (debug) {
+        fprintf(debug, "  wnoutrefresh\n");
+        fclose(debug);
+    }
     
     // Stage window for update (double buffering)
     wnoutrefresh(window_);
@@ -265,23 +314,67 @@ void Window::on_resize() {
 
 void Window::render_children() {
     if (!window_) {
+        FILE* debug = fopen("/tmp/window_render_debug.log", "a");
+        if (debug) {
+            fprintf(debug, "render_children: window_ is null!\n");
+            fclose(debug);
+        }
         return;
+    }
+    
+    FILE* debug = fopen("/tmp/window_render_debug.log", "a");
+    if (debug) {
+        fprintf(debug, "render_children: rendering %zu children\n", children_.size());
+        fclose(debug);
     }
     
     // Render all visible children to this window
     for (auto& child : children_) {
         if (child && child->is_visible()) {
-            // Try to cast to TextInput or Menu which have render(WINDOW*) methods
+            debug = fopen("/tmp/window_render_debug.log", "a");
+            if (debug) {
+                fprintf(debug, "  child %p is visible\n", child.get());
+                fclose(debug);
+            }
+            
+            // Try to cast to widgets which have render(WINDOW*) methods
             auto textinput = std::dynamic_pointer_cast<TextInput>(child);
             if (textinput) {
+                debug = fopen("/tmp/window_render_debug.log", "a");
+                if (debug) {
+                    fprintf(debug, "    -> Rendering as TextInput\n");
+                    fclose(debug);
+                }
                 textinput->render(window_);
                 continue;
             }
             
             auto menu = std::dynamic_pointer_cast<Menu>(child);
             if (menu) {
+                debug = fopen("/tmp/window_render_debug.log", "a");
+                if (debug) {
+                    fprintf(debug, "    -> Rendering as Menu\n");
+                    fclose(debug);
+                }
                 menu->render(window_);
                 continue;
+            }
+            
+            auto label = std::dynamic_pointer_cast<Label>(child);
+            if (label) {
+                debug = fopen("/tmp/window_render_debug.log", "a");
+                if (debug) {
+                    fprintf(debug, "    -> Rendering as Label\n");
+                    fclose(debug);
+                }
+                label->render(window_);
+                continue;
+            }
+            
+            debug = fopen("/tmp/window_render_debug.log", "a");
+            if (debug) {
+                fprintf(debug, "    -> Fallback render()\n");
+                fclose(debug);
             }
             
             // Fallback to regular render for other widget types
