@@ -58,6 +58,7 @@ private:
     // UI components
     ui::WindowPtr main_window_;
     ui::TextInputPtr login_input_;
+    ui::TextInputPtr password_input_;
     ui::MenuPtr room_menu_;
     ui::TextInputPtr chat_input_;
     ui::WindowPtr chat_display_;

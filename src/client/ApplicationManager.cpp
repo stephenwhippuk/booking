@@ -1,4 +1,5 @@
 #include "ApplicationManager.h"
+#include "auth/AuthClient.h"
 #include <sstream>
 #include <chrono>
 #include <iostream>
@@ -251,12 +252,35 @@ void ApplicationManager::process_input_event(const std::string& event) {
         : "";
     
     if (event_type == "LOGIN") {
-        // LOGIN:username
-        state_.set_username(event_data);
-        state_.set_connected(true);
-        network_outbound_.push(event_data + "\n");
+        // LOGIN:username:password
+        size_t second_colon = event_data.find(':');
+        if (second_colon == std::string::npos) {
+            ui_commands_.push(UICommand(UICommandType::SHOW_ERROR,
+                ErrorData{"Invalid login format"}));
+            return;
+        }
         
-        // Wait for server's PROVIDE_NAME response handled in network messages
+        std::string username = event_data.substr(0, second_colon);
+        std::string password = event_data.substr(second_colon + 1);
+        
+        // Authenticate with auth server
+        AuthClient auth_client("localhost", 3001);
+        AuthResult auth_result = auth_client.authenticate(username, password);
+        
+        if (!auth_result.success) {
+            ui_commands_.push(UICommand(UICommandType::SHOW_ERROR,
+                ErrorData{"Login failed: " + auth_result.error_message}));
+            return;
+        }
+        
+        // Store token and display name
+        state_.set_username(auth_result.display_name);  // Use display name for UI
+        state_.set_connected(true);
+        
+        // Send token to chat server instead of username
+        network_outbound_.push("TOKEN:" + auth_result.token + "\n");
+        
+        // Wait for server's response handled in network messages
         // Then wait for ROOM_LIST which will trigger SHOW_FOYER
     }
     else if (event_type == "ROOM_SELECTED") {

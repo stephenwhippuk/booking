@@ -13,6 +13,7 @@ UIManager::UIManager(ThreadSafeQueue<UICommand>& ui_commands,
     , selected_room_index_(0)
     , main_window_(nullptr)
     , login_input_(nullptr)
+    , password_input_(nullptr)
     , room_menu_(nullptr)
     , chat_input_(nullptr)
     , chat_display_(nullptr)
@@ -43,6 +44,7 @@ void UIManager::cleanup_ncurses() {
     
     // Clean up UI components
     login_input_.reset();
+    password_input_.reset();
     room_menu_.reset();
     chat_input_.reset();
     chat_display_.reset();
@@ -106,20 +108,38 @@ void UIManager::setup_login_ui() {
     login_input_->set_label("Username:");
     login_input_->set_focus(true);
     
+    // Create password input (coordinates relative to window)
+    password_input_ = std::make_shared<ui::TextInput>(2, 5, width - 4);
+    password_input_->set_placeholder("Enter password...");
+    password_input_->set_label("Password:");
+    password_input_->set_password_mode(true);
+    password_input_->set_focus(false);
+    
     // Add help label (coordinates relative to window)
-    help_label_ = std::make_shared<ui::Label>(2, 6, "Press 'q' to quit");
+    help_label_ = std::make_shared<ui::Label>(2, 7, "Tab to switch fields | Enter to login | 'q' to quit");
     help_label_->set_attributes(A_DIM);
     
-    // Handle Enter key
+    // Handle Enter key on username field - move to password
     login_input_->set_on_submit([this](const std::string& text) {
         if (!text.empty()) {
-            input_events_.push("LOGIN:" + text);
-            username_ = text;
+            password_input_->set_focus(true);
+            login_input_->set_focus(false);
+        }
+    });
+    
+    // Handle Enter key on password field - attempt login
+    password_input_->set_on_submit([this](const std::string& password) {
+        std::string username = login_input_->get_text();
+        if (!username.empty() && !password.empty()) {
+            input_events_.push("LOGIN:" + username + ":" + password);
+            username_ = username;
             login_input_->clear();
+            password_input_->clear();
         }
     });
     
     main_window_->add_child(login_input_);
+    main_window_->add_child(password_input_);
     main_window_->add_child(help_label_);
 }
 
@@ -375,6 +395,18 @@ void UIManager::poll_input() {
         }
     }
     
+    // Handle Tab key on login screen to switch between username and password
+    if (ch == '\t' && current_screen_ == Screen::LOGIN) {
+        if (main_window_ && login_input_ && password_input_) {
+            if (login_input_->has_focus()) {
+                main_window_->focus_child(password_input_);
+            } else {
+                main_window_->focus_child(login_input_);
+            }
+        }
+        return;
+    }
+    
     // Handle create room in foyer
     if ((ch == 'c' || ch == 'C') && current_screen_ == Screen::FOYER) {
         show_create_room_dialog();
@@ -445,6 +477,9 @@ void UIManager::render_login() {
             if (login_input_) {
                 login_input_->render(win);
             }
+            if (password_input_) {
+                password_input_->render(win);
+            }
             if (help_label_) {
                 help_label_->render(win);
             }
@@ -455,6 +490,13 @@ void UIManager::render_login() {
                               login_input_->get_label().length() + 1 +
                               login_input_->get_cursor_pos();
                 int cursor_y = login_input_->get_bounds().top();
+                wmove(win, cursor_y, cursor_x);
+                curs_set(1);  // Show cursor
+            } else if (password_input_ && password_input_->has_focus()) {
+                int cursor_x = password_input_->get_bounds().left() + 
+                              password_input_->get_label().length() + 1 +
+                              password_input_->get_cursor_pos();
+                int cursor_y = password_input_->get_bounds().top();
                 wmove(win, cursor_y, cursor_x);
                 curs_set(1);  // Show cursor
             } else {

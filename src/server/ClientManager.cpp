@@ -1,4 +1,5 @@
 #include "ClientManager.h"
+#include "auth/AuthClient.h"
 #include <iostream>
 #include <cstring>
 #include <sys/socket.h>
@@ -35,25 +36,47 @@ std::string ClientManager::get_client_name(int client_fd) {
 }
 
 std::string ClientManager::request_client_name(int client_fd, const std::string& client_ip) {
-    const char* name_request = "PROVIDE_NAME\n";
-    send(client_fd, name_request, strlen(name_request), 0);
+    // Client should send: TOKEN:<token>
+    char buffer[512];
+    ssize_t bytes = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
     
-    char name_buffer[256];
-    ssize_t name_bytes = recv(client_fd, name_buffer, sizeof(name_buffer) - 1, 0);
-    
-    if (name_bytes <= 0) {
+    if (bytes <= 0) {
         std::lock_guard<std::mutex> lock(cout_mutex_);
-        std::cerr << "Client from " << client_ip << " disconnected before providing name\n";
+        std::cerr << "Client from " << client_ip << " disconnected before providing token\n";
         return "";
     }
     
-    name_buffer[name_bytes] = '\0';
-    std::string client_name = name_buffer;
-    if (!client_name.empty() && client_name.back() == '\n') {
-        client_name.pop_back();
+    buffer[bytes] = '\0';
+    std::string message = buffer;
+    if (!message.empty() && message.back() == '\n') {
+        message.pop_back();
     }
     
-    return client_name;
+    // Parse TOKEN:token format
+    if (message.find("TOKEN:") != 0) {
+        std::lock_guard<std::mutex> lock(cout_mutex_);
+        std::cerr << "Client from " << client_ip << " sent invalid message (expected TOKEN:...)\n";
+        const char* error_msg = "ERROR: Expected TOKEN:<token>\n";
+        send(client_fd, error_msg, strlen(error_msg), 0);
+        return "";
+    }
+    
+    std::string token = message.substr(6);  // Skip "TOKEN:"
+    
+    // Validate token with auth server
+    AuthClient auth_client("localhost", 3001);
+    auto user_info = auth_client.get_user_info(token);
+    
+    if (!user_info) {
+        std::lock_guard<std::mutex> lock(cout_mutex_);
+        std::cerr << "Client from " << client_ip << " provided invalid token\n";
+        const char* error_msg = "ERROR: Invalid or expired token\n";
+        send(client_fd, error_msg, strlen(error_msg), 0);
+        return "";
+    }
+    
+    // Success - return display name
+    return user_info->display_name;
 }
 
 void ClientManager::send_room_list(int client_fd) {

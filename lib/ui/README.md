@@ -16,7 +16,7 @@ This library provides a set of reusable UI components for building terminal appl
 
 ## Architecture
 
-### Widget Hierarchy
+### Widget HierarchyS
 
 ```
 Widget (abstract base)
@@ -266,7 +266,7 @@ doupdate();
 ### ❌ Virtual Dispatch Won't Work Reliably
 ```cpp
 // Don't do this:
-widget->render(win);  // May not call the right method
+widget->render(win);  // May not call the right method 
 ```
 
 ### ✅ Always Cast to Concrete Type
@@ -340,6 +340,8 @@ See `src/client/UIManager.cpp` for a complete implementation featuring:
 ### Why Manual Rendering?
 
 The ncurses library has issues with virtual function dispatch across shared libraries. To work around this, we use manual type casting with `std::dynamic_pointer_cast` for rendering. While less elegant than pure polymorphism, this approach is reliable and explicit.
+
+N.B. This limitation will hopefully be removed in a future version. Its a really strange issue.
 
 ### Why Double Buffering?
 
