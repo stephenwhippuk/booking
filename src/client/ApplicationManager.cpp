@@ -1,6 +1,7 @@
 #include "ApplicationManager.h"
 #include "NetworkManager.h"
 #include "auth/AuthClient.h"
+#include "common/NetworkMessage.h"
 #include <sstream>
 #include <chrono>
 #include <iostream>
@@ -106,13 +107,6 @@ bool ApplicationManager::is_in_room() const {
 }
 
 void ApplicationManager::process_network_message(const std::string& message) {
-    // DEBUG: Log all received messages
-    FILE* debug = fopen("/tmp/client_messages.log", "a");
-    if (debug) {
-        fprintf(debug, "[CLIENT] Received message: '%s'\n", message.c_str());
-        fclose(debug);
-    }
-    
     // Handle connection errors
     if (message == "SERVER_DISCONNECTED\n" || message == "CONNECTION_ERROR\n") {
         state_.set_connected(false);
@@ -123,37 +117,38 @@ void ApplicationManager::process_network_message(const std::string& message) {
         return;
     }
     
-    // Process state changes BEFORE ROOM_LIST
-    if (message.find("JOINED_ROOM") != std::string::npos) {
+    // Parse JSON message
+    auto net_msg = NetworkMessage::deserialize(message);
+    
+    if (net_msg.body.type == "ERROR") {
+        std::string error_msg = net_msg.body.data.value("message", "Unknown error");
+        ui_commands_.push(UICommand(UICommandType::SHOW_ERROR, ErrorData{error_msg}));
+        return;
+    }
+    
+    if (net_msg.body.type == "ROOM_JOINED") {
         in_room_ = true;
-        
-        // Parse room name if present
-        size_t pos = message.find("JOINED_ROOM:");
-        std::string room_name;
-        if (pos != std::string::npos) {
-            size_t start = pos + 12;  // Length of "JOINED_ROOM:"
-            size_t end = message.find('\n', start);
-            if (end != std::string::npos) {
-                room_name = message.substr(start, end - start);
-                state_.set_current_room(room_name);
-            }
-        }
-        
+        std::string room_name = net_msg.body.data.value("room_name", "");
+        state_.set_current_room(room_name);
         state_.set_screen(ApplicationState::Screen::CHATROOM);
         state_.clear_chat_messages();
         ui_commands_.push(UICommand(UICommandType::SHOW_CHATROOM, room_name));
     }
-    
-    if (message.find("LEFT_ROOM") != std::string::npos) {
+    else if (net_msg.body.type == "LEFT_ROOM") {
         in_room_ = false;
         state_.set_current_room("");
         state_.clear_chat_messages();
-        // Don't transition to foyer yet - wait for ROOM_LIST
     }
-    
-    // Handle room list
-    if (message.find("ROOM_LIST") != std::string::npos) {
-        auto rooms = parse_room_list(message);
+    else if (net_msg.body.type == "ROOM_LIST") {
+        std::vector<RoomInfo> rooms;
+        if (net_msg.body.data.contains("rooms") && net_msg.body.data["rooms"].is_array()) {
+            for (const auto& room_name : net_msg.body.data["rooms"]) {
+                RoomInfo info;
+                info.name = room_name.get<std::string>();
+                info.client_count = 0;  // Server can optionally provide this
+                rooms.push_back(info);
+            }
+        }
         state_.set_rooms(rooms);
         
         // Only show foyer if not in a room
@@ -164,84 +159,23 @@ void ApplicationManager::process_network_message(const std::string& message) {
                 RoomListData{rooms}));
         }
     }
-    
-    // Handle chat messages
-    if (message.find("CHAT:") != std::string::npos) {
-        size_t pos = message.find("CHAT:");
-        if (pos != std::string::npos) {
-            size_t start = pos + 5;  // Length of "CHAT:"
-            size_t end = message.find('\n', start);
-            if (end != std::string::npos) {
-                std::string chat_msg = message.substr(start, end - start);
-                state_.add_chat_message(chat_msg);
-                ui_commands_.push(UICommand(UICommandType::ADD_CHAT_MESSAGE, 
-                    ChatMessageData{chat_msg}));
-            }
+    else if (net_msg.body.type == "MESSAGE") {
+        std::string sender = net_msg.body.data.value("sender", "Unknown");
+        std::string msg_text = net_msg.body.data.value("message", "");
+        std::string formatted = "[" + sender + "] " + msg_text;
+        
+        state_.add_chat_message(formatted);
+        ui_commands_.push(UICommand(UICommandType::ADD_CHAT_MESSAGE, 
+            ChatMessageData{formatted}));
+    }
+    else if (net_msg.body.type == "PARTICIPANT_LIST") {
+        std::vector<std::string> participants;
+        if (net_msg.body.data.contains("participants") && net_msg.body.data["participants"].is_array()) {
+            participants = net_msg.body.data["participants"].get<std::vector<std::string>>();
         }
-    }
-    
-    // Handle broadcast messages (from server) - find ALL occurrences
-    size_t pos = 0;
-    while ((pos = message.find("BROADCAST:", pos)) != std::string::npos) {
-        size_t start = pos + 10;  // Length of "BROADCAST:"
-        size_t end = message.find('\n', start);
-        if (end != std::string::npos) {
-            std::string chat_msg = message.substr(start, end - start);
-            state_.add_chat_message(chat_msg);
-            ui_commands_.push(UICommand(UICommandType::ADD_CHAT_MESSAGE, 
-                ChatMessageData{chat_msg}));
-            pos = end + 1;  // Move past this message
-        } else {
-            break;  // No complete message found
-        }
-    }
-    
-    // Handle member list
-    if (message.find("MEMBER_LIST:") != std::string::npos) {
-        size_t member_pos = message.find("MEMBER_LIST:");
-        size_t start = member_pos + 12;  // Length of "MEMBER_LIST:"
-        size_t end = message.find('\n', start);
-        if (end != std::string::npos) {
-            std::string member_data = message.substr(start, end - start);
-            
-            FILE* debug = fopen("/tmp/client_messages.log", "a");
-            if (debug) {
-                fprintf(debug, "[CLIENT] Received MEMBER_LIST, raw data: '%s'\n", member_data.c_str());
-            }
-            
-            // Parse comma-separated list
-            std::vector<std::string> participants;
-            std::stringstream ss(member_data);
-            std::string name;
-            while (std::getline(ss, name, ',')) {
-                if (!name.empty()) {
-                    participants.push_back(name);
-                }
-            }
-            
-            if (debug) {
-                fprintf(debug, "[CLIENT] Parsed %zu participants: ", participants.size());
-                for (const auto& p : participants) {
-                    fprintf(debug, "'%s' ", p.c_str());
-                }
-                fprintf(debug, "\n");
-                fclose(debug);
-            }
-            
-            ui_commands_.push(UICommand(UICommandType::UPDATE_PARTICIPANTS,
-                ParticipantsData{participants}));
-        }
-    }
-    
-    // Handle errors
-    if (message.find("ROOM_EXISTS") != std::string::npos) {
-        ui_commands_.push(UICommand(UICommandType::SHOW_ERROR, 
-            ErrorData{"Room already exists"}));
-    }
-    
-    if (message.find("ROOM_NOT_FOUND") != std::string::npos) {
-        ui_commands_.push(UICommand(UICommandType::SHOW_ERROR, 
-            ErrorData{"Room not found"}));
+        
+        ui_commands_.push(UICommand(UICommandType::UPDATE_PARTICIPANTS,
+            ParticipantsData{participants}));
     }
 }
 
@@ -288,7 +222,8 @@ void ApplicationManager::process_input_event(const std::string& event) {
             
             // Send token immediately (before starting network thread)
             // Server expects token as the first message
-            std::string token_msg = "TOKEN:" + auth_result.token + "\n";
+            auto auth_msg = NetworkMessage::create_auth(auth_result.token);
+            std::string token_msg = auth_msg.serialize();
             
             int sock = network_manager_->get_socket();
             ssize_t sent = send(sock, token_msg.c_str(), token_msg.length(), 0);
@@ -313,16 +248,19 @@ void ApplicationManager::process_input_event(const std::string& event) {
     else if (event_type == "ROOM_SELECTED") {
         // ROOM_SELECTED:room_name
         std::string token = state_.get_token();
-        network_outbound_.push("TOKEN:" + token + "|JOIN_ROOM:" + event_data + "\n");
+        auto msg = NetworkMessage::create_join_room(token, event_data);
+        network_outbound_.push(msg.serialize());
     }
     else if (event_type == "CREATE_ROOM") {
         // CREATE_ROOM:room_name
         std::string token = state_.get_token();
-        network_outbound_.push("TOKEN:" + token + "|CREATE_ROOM:" + event_data + "\n");
+        auto msg = NetworkMessage::create_create_room(token, event_data);
+        network_outbound_.push(msg.serialize());
     }
     else if (event_type == "LEAVE") {
         std::string token = state_.get_token();
-        network_outbound_.push("TOKEN:" + token + "|/leave\n");
+        auto msg = NetworkMessage::create_leave(token);
+        network_outbound_.push(msg.serialize());
     }
     else if (event_type == "LOGOUT") {
         network_outbound_.push("/logout\n");
@@ -344,8 +282,9 @@ void ApplicationManager::process_input_event(const std::string& event) {
         ui_commands_.push(UICommand(UICommandType::ADD_CHAT_MESSAGE, 
             ChatMessageData{formatted_msg}));
         
-        // Send to server with token: TOKEN:<token>|<message>
+        // Send to server with token
         std::string token = state_.get_token();
-        network_outbound_.push("TOKEN:" + token + "|" + event_data + "\n");
+        auto msg = NetworkMessage::create_chat_message(token, event_data);
+        network_outbound_.push(msg.serialize());
     }
 }

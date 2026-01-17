@@ -1,5 +1,6 @@
 #include "ClientManager.h"
 #include "auth/AuthClient.h"
+#include "common/NetworkMessage.h"
 #include <iostream>
 #include <cstring>
 #include <sys/socket.h>
@@ -66,8 +67,8 @@ bool ClientManager::validate_token(const std::string& token) {
 }
 
 std::string ClientManager::request_client_name(int client_fd, const std::string& client_ip) {
-    // Client should send: TOKEN:<token>
-    char buffer[512];
+    // Client should send: JSON AUTH message
+    char buffer[4096];
     ssize_t bytes = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
     
     if (bytes <= 0) {
@@ -78,20 +79,20 @@ std::string ClientManager::request_client_name(int client_fd, const std::string&
     
     buffer[bytes] = '\0';
     std::string message = buffer;
-    if (!message.empty() && message.back() == '\n') {
-        message.pop_back();
-    }
     
-    // Parse TOKEN:token format
-    if (message.find("TOKEN:") != 0) {
+    // Parse JSON message
+    auto net_msg = NetworkMessage::deserialize(message);
+    
+    if (net_msg.body.type != "AUTH") {
         std::lock_guard<std::mutex> lock(cout_mutex_);
-        std::cerr << "Client from " << client_ip << " sent invalid message (expected TOKEN:...)\n";
-        const char* error_msg = "ERROR: Expected TOKEN:<token>\n";
-        send(client_fd, error_msg, strlen(error_msg), 0);
+        std::cerr << "Client from " << client_ip << " sent invalid message (expected AUTH)\n";
+        auto error_msg = NetworkMessage::create_error("Expected AUTH message");
+        std::string error_str = error_msg.serialize();
+        send(client_fd, error_str.c_str(), error_str.length(), 0);
         return "";
     }
     
-    std::string token = message.substr(6);  // Skip "TOKEN:"
+    std::string token = net_msg.header.token;
     
     // Validate token with auth server
     AuthClient auth_client("localhost", 3001);
@@ -114,14 +115,14 @@ std::string ClientManager::request_client_name(int client_fd, const std::string&
 
 void ClientManager::send_room_list(int client_fd) {
     std::lock_guard<std::mutex> lock(rooms_mutex_);
-    std::stringstream ss;
-    ss << "ROOM_LIST\n";
+    std::vector<std::string> room_names;
     for (const auto& [name, room] : chat_rooms_) {
-        ss << name << "|" << room->get_client_count() << "\n";
+        room_names.push_back(name);
     }
-    ss << "END_ROOM_LIST\n";
-    std::string list = ss.str();
-    send(client_fd, list.c_str(), list.length(), 0);
+    
+    auto msg = NetworkMessage::create_room_list(room_names);
+    std::string msg_str = msg.serialize();
+    send(client_fd, msg_str.c_str(), msg_str.length(), 0);
 }
 
 void ClientManager::broadcast_room_list_to_foyer() {
@@ -155,32 +156,14 @@ void ClientManager::broadcast_member_list_to_room(const std::string& room_name) 
     // Get list of members
     auto members = room->get_client_names();
     
-    // Build MEMBER_LIST message
-    std::string member_list_msg = "MEMBER_LIST:";
-    for (size_t i = 0; i < members.size(); ++i) {
-        if (i > 0) member_list_msg += ",";
-        member_list_msg += members[i];
-    }
-    member_list_msg += "\n";
+    // Create JSON message
+    auto msg = NetworkMessage::create_participant_list(members);
+    std::string msg_str = msg.serialize();
     
-    // DEBUG: Log what we're broadcasting
-    FILE* debug = fopen("/tmp/server_member_list.log", "a");
-    if (debug) {
-        fprintf(debug, "[SERVER] Broadcasting to room '%s': %s", room_name.c_str(), member_list_msg.c_str());
-        fprintf(debug, "[SERVER] Found %zu members\n", members.size());
-    }
-    
-    // Send to all clients in the room - get FDs directly from room
+    // Send to all clients in the room
     auto client_fds = room->get_client_fds();
     for (int fd : client_fds) {
-        ssize_t sent = send(fd, member_list_msg.c_str(), member_list_msg.length(), MSG_NOSIGNAL);
-        if (debug) {
-            fprintf(debug, "[SERVER] Sent to client fd=%d, result=%zd\n", fd, sent);
-        }
-    }
-    
-    if (debug) {
-        fclose(debug);
+        send(fd, msg_str.c_str(), msg_str.length(), MSG_NOSIGNAL);
     }
 }
 
@@ -207,13 +190,17 @@ bool ClientManager::join_room(int client_fd, ClientInfo& client_info, const std:
     client_info.current_room = room_name;
     room->add_client(client_fd, client_info.name, client_info.ip);
     
-    std::string join_msg = "[SERVER] " + client_info.name + " joined the room\n";
-    room->broadcast_message(join_msg, client_fd);
+    // Broadcast join notification
+    auto join_notification = NetworkMessage::create_broadcast_message("SERVER", client_info.name + " joined the room");
+    std::string join_str = join_notification.serialize();
+    room->broadcast_message(join_str, client_fd);
     
     room->send_history_to_client(client_fd);
     
-    std::string success = "JOINED_ROOM:" + room_name + "\n";
-    send(client_fd, success.c_str(), success.length(), 0);
+    // Send success response
+    auto success_msg = NetworkMessage::create_room_joined(room_name);
+    std::string success_str = success_msg.serialize();
+    send(client_fd, success_str.c_str(), success_str.length(), 0);
     
     // Notify foyer clients of room count change
     broadcast_room_list_to_foyer();
@@ -244,8 +231,10 @@ void ClientManager::leave_room(int client_fd, ClientInfo& client_info) {
     }
     
     if (room) {
-        std::string leave_msg = "[SERVER] " + client_info.name + " left the room\n";
-        room->broadcast_message(leave_msg, client_fd);
+        // Broadcast leave notification
+        auto leave_notification = NetworkMessage::create_broadcast_message("SERVER", client_info.name + " left the room");
+        std::string leave_str = leave_notification.serialize();
+        room->broadcast_message(leave_str, client_fd);
         room->remove_client(client_fd);
         
         {
@@ -255,8 +244,10 @@ void ClientManager::leave_room(int client_fd, ClientInfo& client_info) {
     }
     
     client_info.current_room.clear();
-    const char* msg = "LEFT_ROOM\n";
-    send(client_fd, msg, strlen(msg), 0);
+    auto left_msg = NetworkMessage::create_error("Left room");  // Using error type with message
+    left_msg.body.type = "LEFT_ROOM";
+    std::string left_str = left_msg.serialize();
+    send(client_fd, left_str.c_str(), left_str.length(), 0);
     
     // Notify foyer clients of room count change
     broadcast_room_list_to_foyer();
@@ -274,32 +265,21 @@ void ClientManager::handle_foyer(int client_fd, ClientInfo& client_info) {
         }
         
         buffer[bytes_read] = '\0';
-        std::string command(buffer);
+        std::string message(buffer);
         
-        if (!command.empty() && command.back() == '\n') {
-            command.pop_back();
+        // Parse JSON message
+        auto net_msg = NetworkMessage::deserialize(message);
+        
+        // Validate token
+        if (!validate_token(net_msg.header.token)) {
+            auto error_msg = NetworkMessage::create_error("Invalid or expired token");
+            std::string error_str = error_msg.serialize();
+            send(client_fd, error_str.c_str(), error_str.length(), 0);
+            return;
         }
         
-        // Parse TOKEN:<token>|<command> format
-        if (command.find("TOKEN:") == 0) {
-            size_t pipe_pos = command.find('|');
-            if (pipe_pos != std::string::npos) {
-                std::string token = command.substr(6, pipe_pos - 6);  // Skip "TOKEN:"
-                std::string actual_command = command.substr(pipe_pos + 1);
-                
-                // Validate token
-                if (!validate_token(token)) {
-                    const char* error_msg = "ERROR: Invalid or expired token\n";
-                    send(client_fd, error_msg, strlen(error_msg), 0);
-                    return;
-                }
-                
-                command = actual_command;
-            }
-        }
-        
-        if (command.rfind("CREATE_ROOM:", 0) == 0) {
-            std::string room_name = command.substr(12);
+        if (net_msg.body.type == "CREATE_ROOM") {
+            std::string room_name = net_msg.body.data.value("room_name", "");
             if (create_room(room_name)) {
                 // Auto-join the creator to the new room
                 if (join_room(client_fd, client_info, room_name)) {
@@ -311,20 +291,22 @@ void ClientManager::handle_foyer(int client_fd, ClientInfo& client_info) {
                     return;
                 }
             } else {
-                const char* error = "ROOM_EXISTS\n";
-                send(client_fd, error, strlen(error), 0);
+                auto error_msg = NetworkMessage::create_error("Room already exists");
+                std::string error_str = error_msg.serialize();
+                send(client_fd, error_str.c_str(), error_str.length(), 0);
             }
-        } else if (command.rfind("JOIN_ROOM:", 0) == 0) {
-            std::string room_name = command.substr(10);
+        } else if (net_msg.body.type == "JOIN_ROOM") {
+            std::string room_name = net_msg.body.data.value("room_name", "");
             if (join_room(client_fd, client_info, room_name)) {
                 return;
             } else {
-                const char* error = "ROOM_NOT_FOUND\n";
-                send(client_fd, error, strlen(error), 0);
+                auto error_msg = NetworkMessage::create_error("Room not found");
+                std::string error_str = error_msg.serialize();
+                send(client_fd, error_str.c_str(), error_str.length(), 0);
             }
-        } else if (command == "REFRESH_ROOMS") {
+        } else if (net_msg.body.type == "REFRESH_ROOMS") {
             send_room_list(client_fd);
-        } else if (command == "/quit") {
+        } else if (net_msg.body.type == "QUIT") {
             return;
         }
     }
@@ -353,45 +335,43 @@ void ClientManager::handle_room_chat(int client_fd, ClientInfo& client_info) {
         }
         
         buffer[bytes_read] = '\0';
-        std::string message(buffer);
+        std::string msg_str(buffer);
         
-        // Parse TOKEN:<token>|<message> format
-        if (message.find("TOKEN:") == 0) {
-            size_t pipe_pos = message.find('|');
-            if (pipe_pos != std::string::npos) {
-                std::string token = message.substr(6, pipe_pos - 6);  // Skip "TOKEN:"
-                std::string actual_message = message.substr(pipe_pos + 1);
-                
-                // Validate token
-                if (!validate_token(token)) {
-                    const char* error_msg = "ERROR: Invalid or expired token\n";
-                    send(client_fd, error_msg, strlen(error_msg), 0);
-                    return;
-                }
-                
-                message = actual_message;
+        // Parse JSON message
+        auto net_msg = NetworkMessage::deserialize(msg_str);
+        
+        // Validate token
+        if (!validate_token(net_msg.header.token)) {
+            auto error_msg = NetworkMessage::create_error("Invalid or expired token");
+            std::string error_str = error_msg.serialize();
+            send(client_fd, error_str.c_str(), error_str.length(), 0);
+            return;
+        }
+        
+        if (net_msg.body.type == "LEAVE") {
+            leave_room(client_fd, client_info);
+            return;
+        } else if (net_msg.body.type == "QUIT") {
+            leave_room(client_fd, client_info);
+            auto quit_msg = NetworkMessage::create_error("Disconnected");
+            std::string quit_str = quit_msg.serialize();
+            send(client_fd, quit_str.c_str(), quit_str.length(), 0);
+            return;
+        } else if (net_msg.body.type == "CHAT_MESSAGE") {
+            std::string message = net_msg.body.data.value("message", "");
+            
+            std::string display_name = client_info.name;
+            {
+                std::lock_guard<std::mutex> lock(cout_mutex_);
+                std::cout << "[" << client_info.current_room << "] [" << display_name << "] " << message << "\n";
+                std::cout.flush();
             }
+            
+            // Broadcast as JSON message
+            auto broadcast_msg = NetworkMessage::create_broadcast_message(display_name, message);
+            std::string broadcast_str = broadcast_msg.serialize();
+            room->broadcast_message(broadcast_str, client_fd);
         }
-        
-        if (message == "/leave\n") {
-            leave_room(client_fd, client_info);
-            return;
-        } else if (message == "/quit\n") {
-            leave_room(client_fd, client_info);
-            const char* quit_msg = "QUIT\n";
-            send(client_fd, quit_msg, strlen(quit_msg), 0);
-            return;
-        }
-        
-        std::string display_name = client_info.name + " (" + client_info.ip + ")";
-        {
-            std::lock_guard<std::mutex> lock(cout_mutex_);
-            std::cout << "[" << client_info.current_room << "] [" << display_name << "] " << message;
-            std::cout.flush();
-        }
-        
-        std::string chat_message = "[" + display_name + "] " + message;
-        room->broadcast_message(chat_message, client_fd);
     }
 }
 
@@ -407,30 +387,25 @@ void ClientManager::handle_client(int client_fd, const std::string& client_ip) {
     
     token_buffer[token_bytes] = '\0';
     std::string token_message = token_buffer;
-    if (!token_message.empty() && token_message.back() == '\n') {
-        token_message.pop_back();
-    }
     
-    // Parse TOKEN:token format
-    if (token_message.find("TOKEN:") != 0) {
+    // Parse JSON message
+    auto net_msg = NetworkMessage::deserialize(token_message);
+    
+    if (net_msg.body.type != "AUTH") {
         close(client_fd);
         return;
     }
     
-    std::string token = token_message.substr(6);
-    
-    // DEBUG: Log token validation attempt
-    {
-        std::lock_guard<std::mutex> lock(cout_mutex_);
-    }
+    std::string token = net_msg.header.token;
     
     // Validate token
     AuthClient auth_client("localhost", 3001);
     auto user_info = auth_client.get_user_info(token);
     
     if (!user_info) {
-        const char* error_msg = "ERROR: Invalid or expired token\n";
-        send(client_fd, error_msg, strlen(error_msg), 0);
+        auto error_msg = NetworkMessage::create_error("Invalid or expired token");
+        std::string error_str = error_msg.serialize();
+        send(client_fd, error_str.c_str(), error_str.length(), 0);
         close(client_fd);
         return;
     }

@@ -39,6 +39,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Add UI library subdirectory
 add_subdirectory(lib/ui)
 
+# Add Common library subdirectory
+add_subdirectory(lib/common)
+
 # Add Auth library subdirectory
 add_subdirectory(lib/auth)
 
@@ -51,7 +54,7 @@ add_executable(client
     ${SRC_DIR}/client/UIManager.cpp
 )
 target_include_directories(client PRIVATE ${INCLUDE_DIR})
-target_link_libraries(client ncurses_ui auth_lib ncurses pthread)
+target_link_libraries(client ncurses_ui auth_lib common_lib ncurses pthread)
 
 # Server executable with socket and client management classes
 add_executable(server 
@@ -61,7 +64,7 @@ add_executable(server
     ${SRC_DIR}/server/ChatRoom.cpp
 )
 target_include_directories(server PRIVATE ${INCLUDE_DIR})
-target_link_libraries(server auth_lib pthread)
+target_link_libraries(server auth_lib common_lib pthread)
 
 # Auth server executable
 add_executable(auth_server
@@ -83,6 +86,7 @@ target_include_directories(tests PRIVATE ${INCLUDE_DIR})
 target_link_libraries(tests 
     GTest::gtest_main
     auth_lib
+    common_lib
     pthread
 )
 
