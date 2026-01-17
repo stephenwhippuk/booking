@@ -30,13 +30,14 @@ See [ARCHITECTURE_REDESIGN.md](docs/ARCHITECTURE_REDESIGN.md) for detailed desig
 - **NetworkManager**: Pure TCP transport layer
 - **ApplicationManager**: Protocol parsing and business logic
 - **ApplicationState**: Single-threaded state management
-- **UIManager**: ncurses presentation layer
+- **UIManager**: ncurses presentation layer with component library
 - **ThreadSafeQueue**: Lock-free queue for inter-thread communication
+- **UI Components**: Widget-based UI library (Window, TextInput, Menu, Label, ListBox)
 
 ### Server
 - **ServerSocket**: TCP server management
 - **ClientManager**: Client connection handling
-- **ChatRoom**: Room and message management
+- **ChatRoom**: Room and message management with member tracking
 
 ## Building
 
@@ -98,48 +99,67 @@ Test coverage:
 ### Foyer (Room List)
 - Use ↑/↓ to navigate rooms
 - Press Enter to join selected room
-- Type room name and press Enter to create new room
+- Press 'c' to create a new room (opens dialog)
 - Press 'q' to quit
 
 ### Chatroom
 - Type message and press Enter to send
+- Member list displayed on the right side
 - `/leave` - Return to foyer
 - `/quit` - Exit application
 
 ## Key Features
 
-✅ **Non-blocking Architecture**: No thread ever blocks on another
-✅ **Zero Deadlocks**: Clean shutdown with Ctrl+C
-✅ **Immediate Updates**: No polling loops, instant room list updates
-✅ **Thread Safety**: Lock-free queues, single-threaded state
-✅ **Complete Separation**: Network, logic, and UI are independent
+✅ **Non-blocking Architecture**: No thread ever blocks on another  
+✅ **Zero Deadlocks**: Clean shutdown with Ctrl+C  
+✅ **Immediate Updates**: No polling loops, instant room list updates  
+✅ **Thread Safety**: Lock-free queues, single-threaded state  
+✅ **Complete Separation**: Network, logic, and UI are independent  
+✅ **Component-Based UI**: Reusable widget library for ncurses  
+✅ **Member List**: Real-time display of room participants  
+✅ **Room Creation**: Interactive dialog for creating new rooms  
+✅ **Flicker-Free Rendering**: Double buffering for smooth UI updates
 
 ## Project Structure
 
 ```
 .
 ├── src/
-│   ├── client.cpp              # Main client entry point
-│   ├── server.cpp              # Main server entry point
+│   ├── client/
+│   │   ├── client.cpp          # Main client entry point
+│   │   ├── NetworkManager.*    # TCP transport layer
+│   │   ├── ApplicationManager.* # Business logic layer
+│   │   ├── ApplicationState.*   # State management
+│   │   └── UIManager.*         # Presentation layer
+│   ├── server/
+│   │   ├── server.cpp          # Main server entry point
+│   │   ├── ChatRoom.*          # Room management
+│   │   ├── ClientManager.*     # Client handling
+│   │   └── ServerSocket.*      # Server TCP socket
 │   ├── ThreadSafeQueue.h       # Lock-free queue template
-│   ├── NetworkManager.*        # TCP transport layer
-│   ├── ApplicationManager.*    # Business logic layer
-│   ├── ApplicationState.*      # State management
-│   ├── UIManager.*            # Presentation layer
-│   ├── UICommand.h            # UI command structures
-│   ├── ChatRoom.*             # Server room management
-│   ├── ClientManager.*        # Server client handling
-│   ├── ServerSocket.*         # Server TCP socket
-│   └── RoomInfo.h             # Shared data structures
+│   ├── UICommand.h             # UI command structures
+│   └── RoomInfo.h              # Shared data structures
+├── lib/
+│   └── ui/                     # ncurses UI component library
+│       ├── include/ui/
+│       │   ├── Widget.h        # Base widget class
+│       │   ├── Window.h        # Container with border
+│       │   ├── TextInput.h     # Input field with cursor
+│       │   ├── Menu.h          # Selection list
+│       │   ├── Label.h         # Static text
+│       │   └── ListBox.h       # Read-only list
+│       └── src/
+│           └── [implementations]
 ├── tests/
 │   ├── ThreadSafeQueueTest.cpp
 │   ├── NetworkManagerTest.cpp
 │   └── ApplicationManagerTest.cpp
-├── archive/
-│   └── old_architecture/      # Legacy event-based code
+├── docs/
+│   ├── images/                 # Screenshots
+│   ├── ARCHITECTURE_REDESIGN.md
+│   └── MIGRATION_COMPLETE.md
 ├── CMakeLists.txt
-├── ARCHITECTURE_REDESIGN.md   # Design documentation
-└── MIGRATION_COMPLETE.md      # Migration summary
+└── README.md
 ```
 
 ## Development
@@ -174,6 +194,7 @@ See `tests/` directory for examples.
 
 - [ARCHITECTURE_REDESIGN.md](docs/ARCHITECTURE_REDESIGN.md) - Complete design document
 - [MIGRATION_COMPLETE.md](docs/MIGRATION_COMPLETE.md) - Migration summary and comparison
+- [UI Component Library](lib/ui/README.md) - ncurses widget documentation
 - [spec.md](docs/spec.md) - Original specification
 
 ## License
