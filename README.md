@@ -2,6 +2,17 @@
 
 A multi-threaded chat server and client application with a queue-based architecture for complete thread isolation.
 
+## Screenshots
+
+### Login Screen
+![Login Screen](docs/images/login.png)
+
+### Foyer with Room Selection
+![Foyer](docs/images/foyer.png)
+
+### Chatroom with Member List
+![Chatroom](docs/images/chatroom.png)
+
 ## Architecture
 
 The system uses a **pure message-passing architecture** with three independent threads communicating through lock-free queues:
