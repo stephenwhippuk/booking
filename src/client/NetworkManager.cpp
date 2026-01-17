@@ -26,6 +26,15 @@ NetworkManager::~NetworkManager() {
 }
 
 bool NetworkManager::connect(const std::string& host, int port, std::string& error_msg) {
+    // Close existing socket if any
+    if (socket_ >= 0) {
+        close(socket_);
+        socket_ = -1;
+    }
+    
+    // Reset connection state
+    connected_ = false;
+    
     // Create socket
     socket_ = socket(AF_INET, SOCK_STREAM, 0);
     if (socket_ < 0) {
@@ -60,6 +69,11 @@ bool NetworkManager::connect(const std::string& host, int port, std::string& err
 void NetworkManager::start() {
     if (running_ || !connected_) {
         return;
+    }
+    
+    // Ensure any previous thread is joined before starting a new one
+    if (network_thread_.joinable()) {
+        return;  // Already running or needs cleanup
     }
     
     running_ = true;

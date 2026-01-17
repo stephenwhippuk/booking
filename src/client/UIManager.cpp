@@ -298,6 +298,9 @@ void UIManager::process_commands() {
                 current_screen_ = Screen::FOYER;
                 selected_room_index_ = 0;
                 input_buffer_.clear();
+                if (cmd.has_data()) {
+                    username_ = cmd.get<std::string>();
+                }
                 setup_foyer_ui();
                 break;
                 
@@ -353,6 +356,13 @@ void UIManager::process_commands() {
             case UICommandType::SHOW_ERROR:
                 if (cmd.has_data()) {
                     error_message_ = cmd.get<ErrorData>().message;
+                    // Create and show message box
+                    int max_y, max_x;
+                    getmaxyx(stdscr, max_y, max_x);
+                    int box_width = std::min(60, max_x - 4);
+                    int box_height = 9;
+                    message_box_ = std::make_shared<ui::MessageBox>(box_width, box_height, "Error", error_message_);
+                    message_box_->set_visible(true);
                 }
                 break;
                 
@@ -378,6 +388,15 @@ void UIManager::process_commands() {
 void UIManager::poll_input() {
     int ch = getch();
     if (ch == ERR) return;  // No input
+    
+    // If message box is visible, give it priority
+    if (message_box_ && message_box_->is_visible()) {
+        ui::Event event;
+        event.type = ui::EventType::KEY_PRESS;
+        event.key = ch;
+        message_box_->handle_event(event);
+        return;
+    }
     
     // Create event for components
     ui::Event event;
@@ -448,6 +467,11 @@ void UIManager::render() {
         attroff(A_REVERSE);
         error_message_.clear();  // Clear after showing once
         wnoutrefresh(stdscr);
+    }
+    
+    // Render message box on top if visible
+    if (message_box_ && message_box_->is_visible()) {
+        message_box_->render(stdscr);
     }
     
     // Update physical screen once (double buffering)

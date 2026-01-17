@@ -12,6 +12,7 @@ set(UI_SOURCES
     src/Menu.cpp
     src/Label.cpp
     src/ListBox.cpp
+    src/MessageBox.cpp
 )
 
 # Library header files
@@ -22,6 +23,7 @@ set(UI_HEADERS
     include/ui/Menu.h
     include/ui/Label.h
     include/ui/ListBox.h
+    include/ui/MessageBox.h
     include/ui/Types.h
 )
 

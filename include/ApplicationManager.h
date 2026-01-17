@@ -29,6 +29,9 @@ private:
     ThreadSafeQueue<UICommand>& ui_commands_;
     ThreadSafeQueue<std::string>& input_events_;
     
+    // Network manager reference (for connecting after auth)
+    class NetworkManager* network_manager_;
+    
     // Application state (owned by this manager)
     ApplicationState state_;
     
@@ -57,7 +60,8 @@ public:
         ThreadSafeQueue<std::string>& network_inbound,
         ThreadSafeQueue<std::string>& network_outbound,
         ThreadSafeQueue<UICommand>& ui_commands,
-        ThreadSafeQueue<std::string>& input_events
+        ThreadSafeQueue<std::string>& input_events,
+        class NetworkManager* network_manager
     );
     
     ~ApplicationManager();

@@ -2,6 +2,7 @@
 
 #include <string>
 #include <optional>
+#include <vector>
 
 struct AuthResult {
     bool success;
@@ -15,10 +16,13 @@ struct AuthResult {
 struct UserInfo {
     std::string username;
     std::string display_name;
+    std::vector<std::string> roles;
     
     UserInfo() = default;
     UserInfo(const std::string& user, const std::string& display)
         : username(user), display_name(display) {}
+    UserInfo(const std::string& user, const std::string& display, const std::vector<std::string>& user_roles)
+        : username(user), display_name(display), roles(user_roles) {}
 };
 
 class AuthClient {

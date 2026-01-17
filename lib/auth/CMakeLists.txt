@@ -28,7 +28,7 @@ target_include_directories(auth_lib
 
 # Link against threading library
 find_package(Threads REQUIRED)
-target_link_libraries(auth_lib PUBLIC Threads::Threads)
+target_link_libraries(auth_lib PUBLIC Threads::Threads nlohmann_json::nlohmann_json)
 
 # Set C++20 standard
 target_compile_features(auth_lib PUBLIC cxx_std_20)

@@ -1,0 +1,28 @@
+{
+  "users": [
+    {
+      "username": "alice",
+      "password_hash": "be69ba1ae575ef0b",
+      "display_name": "Alice Wonderland",
+      "roles": ["user"]
+    },
+    {
+      "username": "David",
+      "password_hash": "dfe2c71f604730b5",
+      "display_name": "Dave",
+      "roles": ["user"]
+    },
+    {
+      "username": "John",
+      "password_hash": "dfe2c71f604730b5",
+      "display_name": "John",
+      "roles": ["user", "moderator"]
+    },
+    {
+      "username": "Stephen",
+      "password_hash": "dfe2c71f604730b5",
+      "display_name": "Steve",
+      "roles": ["user", "admin"]
+    }
+  ]
+}

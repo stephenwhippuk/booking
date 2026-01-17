@@ -24,6 +24,14 @@ std::string ApplicationState::get_username() const {
     return username_;
 }
 
+void ApplicationState::set_token(const std::string& token) {
+    token_ = token;
+}
+
+std::string ApplicationState::get_token() const {
+    return token_;
+}
+
 // Screen state
 void ApplicationState::set_screen(Screen screen) {
     current_screen_ = screen;

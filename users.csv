@@ -1,5 +1,5 @@
-# User database - Format: username,password_hash,display_name
-alice,be69ba1ae575ef0b,Alice Wonderland
-David,dfe2c71f604730b5,Dave
-John,dfe2c71f604730b5,John
-Stephen,dfe2c71f604730b5,Steve
+# User database - Format: username,password_hash,display_name,roles
+alice,be69ba1ae575ef0b,Alice Wonderland,user
+David,dfe2c71f604730b5,Dave,user
+John,dfe2c71f604730b5,John,user;moderator
+Stephen,dfe2c71f604730b5,Steve,user;admin

@@ -45,7 +45,7 @@ int main() {
         // Create managers with queue references
         NetworkManager network(network_inbound, network_outbound);
         ApplicationManager application(network_inbound, network_outbound, 
-                                      ui_commands, input_events);
+                                      ui_commands, input_events, &network);
         UIManager ui(ui_commands, input_events);
         
         // Set up signal handler
@@ -54,15 +54,10 @@ int main() {
         g_network_outbound = &network_outbound;
         std::signal(SIGINT, signal_handler);
         
-        // Connect to server
-        std::string error;
-        if (!network.connect("127.0.0.1", 3000, error)) {
-            std::cerr << "Failed to connect: " << error << std::endl;
-            return 1;
-        }
+        // DON'T connect to chat server yet - wait until after authentication
+        // Connection will happen in ApplicationManager after successful login
         
-        // Start network and application threads
-        network.start();
+        // Start application thread (network will be started after login)
         application.start();
         
         // Run UI on main thread (blocks until quit)

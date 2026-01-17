@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <algorithm>
 #include <sstream>
+#include <chrono>
 
 constexpr int BUFFER_SIZE = 4096;
 
@@ -33,6 +34,35 @@ std::string ClientManager::get_client_name(int client_fd) {
         return it->name;
     }
     return "Unknown";
+}
+
+bool ClientManager::validate_token(const std::string& token) {
+    auto now = std::chrono::steady_clock::now();
+    
+    // Check cache first
+    {
+        std::lock_guard<std::mutex> lock(token_cache_mutex_);
+        auto it = token_cache_.find(token);
+        if (it != token_cache_.end()) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - it->second).count();
+            if (elapsed < TOKEN_CACHE_SECONDS) {
+                // Token recently validated, trust cache
+                return true;
+            }
+        }
+    }
+    
+    // Validate with auth server
+    AuthClient auth_client("localhost", 3001);
+    bool valid = auth_client.validate_token(token);
+    
+    if (valid) {
+        // Update cache
+        std::lock_guard<std::mutex> lock(token_cache_mutex_);
+        token_cache_[token] = now;
+    }
+    
+    return valid;
 }
 
 std::string ClientManager::request_client_name(int client_fd, const std::string& client_ip) {
@@ -74,6 +104,9 @@ std::string ClientManager::request_client_name(int client_fd, const std::string&
         send(client_fd, error_msg, strlen(error_msg), 0);
         return "";
     }
+    
+    // Store token in client_info for later validation
+    // (caller needs to handle this)
     
     // Success - return display name
     return user_info->display_name;
@@ -247,6 +280,24 @@ void ClientManager::handle_foyer(int client_fd, ClientInfo& client_info) {
             command.pop_back();
         }
         
+        // Parse TOKEN:<token>|<command> format
+        if (command.find("TOKEN:") == 0) {
+            size_t pipe_pos = command.find('|');
+            if (pipe_pos != std::string::npos) {
+                std::string token = command.substr(6, pipe_pos - 6);  // Skip "TOKEN:"
+                std::string actual_command = command.substr(pipe_pos + 1);
+                
+                // Validate token
+                if (!validate_token(token)) {
+                    const char* error_msg = "ERROR: Invalid or expired token\n";
+                    send(client_fd, error_msg, strlen(error_msg), 0);
+                    return;
+                }
+                
+                command = actual_command;
+            }
+        }
+        
         if (command.rfind("CREATE_ROOM:", 0) == 0) {
             std::string room_name = command.substr(12);
             if (create_room(room_name)) {
@@ -304,6 +355,24 @@ void ClientManager::handle_room_chat(int client_fd, ClientInfo& client_info) {
         buffer[bytes_read] = '\0';
         std::string message(buffer);
         
+        // Parse TOKEN:<token>|<message> format
+        if (message.find("TOKEN:") == 0) {
+            size_t pipe_pos = message.find('|');
+            if (pipe_pos != std::string::npos) {
+                std::string token = message.substr(6, pipe_pos - 6);  // Skip "TOKEN:"
+                std::string actual_message = message.substr(pipe_pos + 1);
+                
+                // Validate token
+                if (!validate_token(token)) {
+                    const char* error_msg = "ERROR: Invalid or expired token\n";
+                    send(client_fd, error_msg, strlen(error_msg), 0);
+                    return;
+                }
+                
+                message = actual_message;
+            }
+        }
+        
         if (message == "/leave\n") {
             leave_room(client_fd, client_info);
             return;
@@ -327,14 +396,48 @@ void ClientManager::handle_room_chat(int client_fd, ClientInfo& client_info) {
 }
 
 void ClientManager::handle_client(int client_fd, const std::string& client_ip) {
-    std::string client_name = request_client_name(client_fd, client_ip);
+    // Receive token first
+    char token_buffer[512];
+    ssize_t token_bytes = recv(client_fd, token_buffer, sizeof(token_buffer) - 1, 0);
     
-    if (client_name.empty()) {
+    if (token_bytes <= 0) {
         close(client_fd);
         return;
     }
     
-    ClientInfo client_info{client_fd, client_name, client_ip, ""};
+    token_buffer[token_bytes] = '\0';
+    std::string token_message = token_buffer;
+    if (!token_message.empty() && token_message.back() == '\n') {
+        token_message.pop_back();
+    }
+    
+    // Parse TOKEN:token format
+    if (token_message.find("TOKEN:") != 0) {
+        close(client_fd);
+        return;
+    }
+    
+    std::string token = token_message.substr(6);
+    
+    // DEBUG: Log token validation attempt
+    {
+        std::lock_guard<std::mutex> lock(cout_mutex_);
+    }
+    
+    // Validate token
+    AuthClient auth_client("localhost", 3001);
+    auto user_info = auth_client.get_user_info(token);
+    
+    if (!user_info) {
+        const char* error_msg = "ERROR: Invalid or expired token\n";
+        send(client_fd, error_msg, strlen(error_msg), 0);
+        close(client_fd);
+        return;
+    }
+    
+    std::string client_name = user_info->display_name;
+    
+    ClientInfo client_info{client_fd, client_name, client_ip, "", token};
     
     {
         std::lock_guard<std::mutex> lock(clients_mutex_);

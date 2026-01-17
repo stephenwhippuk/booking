@@ -59,9 +59,31 @@ std::optional<UserInfo> AuthClient::get_user_info(const std::string& token) {
     
     if (status == "USER") {
         UserInfo info;
+        std::string display_and_roles;
         iss >> info.username;
-        // Read rest of line as display name (may contain spaces)
-        std::getline(iss >> std::ws, info.display_name);
+        // Read rest of line as display name and roles
+        std::getline(iss >> std::ws, display_and_roles);
+        
+        // Split display_and_roles by last space to separate display name from roles
+        size_t last_space = display_and_roles.rfind(' ');
+        if (last_space != std::string::npos) {
+            info.display_name = display_and_roles.substr(0, last_space);
+            std::string roles_str = display_and_roles.substr(last_space + 1);
+            
+            // Parse roles (semicolon-separated)
+            if (!roles_str.empty()) {
+                std::istringstream roles_iss(roles_str);
+                std::string role;
+                while (std::getline(roles_iss, role, ';')) {
+                    if (!role.empty()) {
+                        info.roles.push_back(role);
+                    }
+                }
+            }
+        } else {
+            // No roles, display name is the entire string
+            info.display_name = display_and_roles;
+        }
         return info;
     }
     

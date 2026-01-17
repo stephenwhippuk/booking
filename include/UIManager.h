@@ -9,6 +9,7 @@
 #include <ui/Menu.h>
 #include <ui/Label.h>
 #include <ui/ListBox.h>
+#include <ui/MessageBox.h>
 #include <ncurses.h>
 #include <string>
 #include <vector>
@@ -65,6 +66,7 @@ private:
     ui::ListBoxPtr member_list_box_;
     ui::LabelPtr help_label_;
     ui::LabelPtr title_label_;
+    std::shared_ptr<ui::MessageBox> message_box_;
     
     // Thread control
     std::atomic<bool> running_;

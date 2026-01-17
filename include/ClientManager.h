@@ -5,6 +5,7 @@
 #include <map>
 #include <mutex>
 #include <memory>
+#include <chrono>
 #include "ChatRoom.h"
 
 struct ClientInfo {
@@ -12,6 +13,7 @@ struct ClientInfo {
     std::string name;
     std::string ip;
     std::string current_room;
+    std::string token;
 };
 
 class ClientManager {
@@ -21,9 +23,15 @@ private:
     std::mutex clients_mutex_;
     std::mutex rooms_mutex_;
     std::mutex cout_mutex_;
+    
+    // Token validation cache: token -> last_validated_time
+    std::map<std::string, std::chrono::steady_clock::time_point> token_cache_;
+    std::mutex token_cache_mutex_;
+    static constexpr int TOKEN_CACHE_SECONDS = 30;
 
     void remove_client(int client_fd);
     std::string request_client_name(int client_fd, const std::string& client_ip);
+    bool validate_token(const std::string& token);
     void handle_foyer(int client_fd, ClientInfo& client_info);
     void handle_room_chat(int client_fd, ClientInfo& client_info);
     void send_room_list(int client_fd);

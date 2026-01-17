@@ -1,8 +1,9 @@
 #include "auth/FileUserRepository.h"
+#include <nlohmann/json.hpp>
 #include <fstream>
-#include <sstream>
-#include <algorithm>
 #include <iostream>
+
+using json = nlohmann::json;
 
 FileUserRepository::FileUserRepository(const std::string& file_path)
     : file_path_(file_path)
@@ -17,30 +18,34 @@ void FileUserRepository::load_from_file() {
     std::ifstream file(file_path_);
     if (!file.is_open()) {
         std::cerr << "Warning: Could not open user file: " << file_path_ << "\n";
+        std::cerr << "Creating new empty user database.\n";
         return;
     }
     
-    std::string line;
-    while (std::getline(file, line)) {
-        if (line.empty() || line[0] == '#') {
-            continue;  // Skip empty lines and comments
-        }
+    try {
+        json j;
+        file >> j;
         
-        std::istringstream iss(line);
-        std::string username, password_hash, display_name;
-        
-        // Parse CSV: username,password_hash,display_name
-        if (std::getline(iss, username, ',') &&
-            std::getline(iss, password_hash, ',') &&
-            std::getline(iss, display_name)) {
-            
-            User user;
-            user.username = unescape_csv(username);
-            user.password_hash = unescape_csv(password_hash);
-            user.display_name = unescape_csv(display_name);
-            
-            users_[user.username] = user;
+        if (j.contains("users") && j["users"].is_array()) {
+            for (const auto& user_json : j["users"]) {
+                User user;
+                user.username = user_json.value("username", "");
+                user.password_hash = user_json.value("password_hash", "");
+                user.display_name = user_json.value("display_name", "");
+                
+                if (user_json.contains("roles") && user_json["roles"].is_array()) {
+                    for (const auto& role : user_json["roles"]) {
+                        user.roles.push_back(role.get<std::string>());
+                    }
+                }
+                
+                if (!user.username.empty()) {
+                    users_[user.username] = user;
+                }
+            }
         }
+    } catch (const json::exception& e) {
+        std::cerr << "Error parsing JSON file: " << e.what() << "\n";
     }
     
     file.close();
@@ -55,52 +60,21 @@ void FileUserRepository::save_to_file() {
         return;
     }
     
-    file << "# User database - Format: username,password_hash,display_name\n";
+    json j;
+    j["users"] = json::array();
     
     for (const auto& [username, user] : users_) {
-        file << escape_csv(user.username) << ","
-             << escape_csv(user.password_hash) << ","
-             << escape_csv(user.display_name) << "\n";
+        json user_json;
+        user_json["username"] = user.username;
+        user_json["password_hash"] = user.password_hash;
+        user_json["display_name"] = user.display_name;
+        user_json["roles"] = user.roles;
+        
+        j["users"].push_back(user_json);
     }
     
+    file << j.dump(2);  // Pretty print with 2-space indent
     file.close();
-}
-
-std::string FileUserRepository::escape_csv(const std::string& str) {
-    // Simple CSV escaping: quote strings with commas or quotes
-    if (str.find(',') != std::string::npos || str.find('"') != std::string::npos) {
-        std::string escaped = "\"";
-        for (char ch : str) {
-            if (ch == '"') {
-                escaped += "\"\"";  // Double quotes
-            } else {
-                escaped += ch;
-            }
-        }
-        escaped += "\"";
-        return escaped;
-    }
-    return str;
-}
-
-std::string FileUserRepository::unescape_csv(const std::string& str) {
-    if (str.empty() || str[0] != '"') {
-        return str;
-    }
-    
-    std::string unescaped;
-    bool in_quote = false;
-    
-    for (size_t i = 1; i < str.length() - 1; ++i) {
-        if (str[i] == '"' && i + 1 < str.length() && str[i + 1] == '"') {
-            unescaped += '"';
-            ++i;  // Skip next quote
-        } else {
-            unescaped += str[i];
-        }
-    }
-    
-    return unescaped;
 }
 
 std::future<std::optional<User>> FileUserRepository::find_user(const std::string& username) {

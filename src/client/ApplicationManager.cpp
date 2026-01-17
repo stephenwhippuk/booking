@@ -1,8 +1,10 @@
 #include "ApplicationManager.h"
+#include "NetworkManager.h"
 #include "auth/AuthClient.h"
 #include <sstream>
 #include <chrono>
 #include <iostream>
+#include <sys/socket.h>
 
 using namespace std::chrono_literals;
 
@@ -10,11 +12,13 @@ ApplicationManager::ApplicationManager(
     ThreadSafeQueue<std::string>& network_inbound,
     ThreadSafeQueue<std::string>& network_outbound,
     ThreadSafeQueue<UICommand>& ui_commands,
-    ThreadSafeQueue<std::string>& input_events)
+    ThreadSafeQueue<std::string>& input_events,
+    NetworkManager* network_manager)
     : network_inbound_(network_inbound)
     , network_outbound_(network_outbound)
     , ui_commands_(ui_commands)
     , input_events_(input_events)
+    , network_manager_(network_manager)
     , running_(false)
     , in_room_(false)
 {
@@ -155,7 +159,7 @@ void ApplicationManager::process_network_message(const std::string& message) {
         // Only show foyer if not in a room
         if (!in_room_) {
             state_.set_screen(ApplicationState::Screen::FOYER);
-            ui_commands_.push(UICommand(UICommandType::SHOW_FOYER));
+            ui_commands_.push(UICommand(UICommandType::SHOW_FOYER, state_.get_username()));
             ui_commands_.push(UICommand(UICommandType::UPDATE_ROOM_LIST, 
                 RoomListData{rooms}));
         }
@@ -273,26 +277,52 @@ void ApplicationManager::process_input_event(const std::string& event) {
             return;
         }
         
+        // Connect to chat server now that we have a token
+        if (network_manager_) {
+            std::string connect_error;
+            if (!network_manager_->connect("127.0.0.1", 3000, connect_error)) {
+                ui_commands_.push(UICommand(UICommandType::SHOW_ERROR,
+                    ErrorData{"Failed to connect to chat server: " + connect_error}));
+                return;
+            }
+            
+            // Send token immediately (before starting network thread)
+            // Server expects token as the first message
+            std::string token_msg = "TOKEN:" + auth_result.token + "\n";
+            
+            int sock = network_manager_->get_socket();
+            ssize_t sent = send(sock, token_msg.c_str(), token_msg.length(), 0);
+            if (sent <= 0) {
+                ui_commands_.push(UICommand(UICommandType::SHOW_ERROR,
+                    ErrorData{"Failed to send authentication token"}));
+                return;
+            }
+            
+            // Start network thread after token is sent
+            network_manager_->start();
+        }
+        
         // Store token and display name
+        state_.set_token(auth_result.token);
         state_.set_username(auth_result.display_name);  // Use display name for UI
         state_.set_connected(true);
-        
-        // Send token to chat server instead of username
-        network_outbound_.push("TOKEN:" + auth_result.token + "\n");
         
         // Wait for server's response handled in network messages
         // Then wait for ROOM_LIST which will trigger SHOW_FOYER
     }
     else if (event_type == "ROOM_SELECTED") {
         // ROOM_SELECTED:room_name
-        network_outbound_.push("JOIN_ROOM:" + event_data + "\n");
+        std::string token = state_.get_token();
+        network_outbound_.push("TOKEN:" + token + "|JOIN_ROOM:" + event_data + "\n");
     }
     else if (event_type == "CREATE_ROOM") {
         // CREATE_ROOM:room_name
-        network_outbound_.push("CREATE_ROOM:" + event_data + "\n");
+        std::string token = state_.get_token();
+        network_outbound_.push("TOKEN:" + token + "|CREATE_ROOM:" + event_data + "\n");
     }
     else if (event_type == "LEAVE") {
-        network_outbound_.push("/leave\n");
+        std::string token = state_.get_token();
+        network_outbound_.push("TOKEN:" + token + "|/leave\n");
     }
     else if (event_type == "LOGOUT") {
         network_outbound_.push("/logout\n");
@@ -314,7 +344,8 @@ void ApplicationManager::process_input_event(const std::string& event) {
         ui_commands_.push(UICommand(UICommandType::ADD_CHAT_MESSAGE, 
             ChatMessageData{formatted_msg}));
         
-        // Send to server
-        network_outbound_.push(event_data + "\n");
+        // Send to server with token: TOKEN:<token>|<message>
+        std::string token = state_.get_token();
+        network_outbound_.push("TOKEN:" + token + "|" + event_data + "\n");
     }
 }

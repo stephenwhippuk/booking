@@ -5,9 +5,15 @@
 #include <mutex>
 
 /**
- * FileUserRepository - CSV file-based implementation of user repository
+ * FileUserRepository - JSON file-based implementation of user repository
  * 
- * Stores users in a CSV file with format: username,password_hash,display_name
+ * Stores users in a JSON file with format:
+ * {
+ *   "users": [
+ *     {"username": "...", "password_hash": "...", "display_name": "...", "roles": ["role1", "role2"]},
+ *     ...
+ *   ]
+ * }
  * Thread-safe with mutex protection.
  * Loads all users into memory on construction and writes back on modifications.
  */
@@ -27,8 +33,6 @@ public:
 private:
     void load_from_file();
     void save_to_file();
-    std::string escape_csv(const std::string& str);
-    std::string unescape_csv(const std::string& str);
     
     std::string file_path_;
     std::unordered_map<std::string, User> users_;

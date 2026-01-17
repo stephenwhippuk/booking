@@ -21,7 +21,8 @@ protected:
             network_inbound,
             network_outbound,
             ui_commands,
-            input_events
+            input_events,
+            nullptr  // nullptr for network_manager in tests
         );
         app_manager->start();
         std::this_thread::sleep_for(50ms);  // Let thread start

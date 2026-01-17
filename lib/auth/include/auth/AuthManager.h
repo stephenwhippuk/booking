@@ -6,6 +6,7 @@
 #include <mutex>
 #include <optional>
 #include <memory>
+#include <vector>
 
 class IUserRepository;
 
@@ -13,10 +14,13 @@ struct User {
     std::string username;
     std::string password_hash;
     std::string display_name;
+    std::vector<std::string> roles;
     
     User() = default;
     User(const std::string& user, const std::string& pass_hash, const std::string& display)
         : username(user), password_hash(pass_hash), display_name(display) {}
+    User(const std::string& user, const std::string& pass_hash, const std::string& display, const std::vector<std::string>& user_roles)
+        : username(user), password_hash(pass_hash), display_name(display), roles(user_roles) {}
 };
 
 class AuthManager {
@@ -35,6 +39,9 @@ public:
     
     // Get display name from token
     std::optional<std::string> get_display_name(const std::string& token);
+    
+    // Get roles from token
+    std::optional<std::vector<std::string>> get_roles(const std::string& token);
     
     // Revoke token (logout)
     void revoke_token(const std::string& token);

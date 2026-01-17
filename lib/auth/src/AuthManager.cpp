@@ -28,7 +28,7 @@ AuthToken AuthManager::authenticate(const std::string& username, const std::stri
     // Generate new token
     std::lock_guard<std::mutex> lock(mutex_);
     std::string token = generate_token();
-    AuthToken auth_token(token, username, user.display_name);
+    AuthToken auth_token(token, username, user.display_name, user.roles);
     active_tokens_[token] = auth_token;
     
     return auth_token;
@@ -80,6 +80,22 @@ std::optional<std::string> AuthManager::get_display_name(const std::string& toke
     }
     
     return it->second.display_name;
+}
+
+std::optional<std::vector<std::string>> AuthManager::get_roles(const std::string& token) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    auto it = active_tokens_.find(token);
+    if (it == active_tokens_.end()) {
+        return std::nullopt;
+    }
+    
+    if (it->second.is_expired()) {
+        active_tokens_.erase(it);
+        return std::nullopt;
+    }
+    
+    return it->second.roles;
 }
 
 void AuthManager::revoke_token(const std::string& token) {

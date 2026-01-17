@@ -13,7 +13,7 @@ AuthServer::AuthServer(int port)
     , running_(false)
 {
     // Create file-based user repository
-    auto user_repository = std::make_shared<FileUserRepository>("users.csv");
+    auto user_repository = std::make_shared<FileUserRepository>("users.json");
     auth_manager_ = std::make_unique<AuthManager>(user_repository);
 }
 
@@ -158,9 +158,16 @@ void AuthServer::process_request(int client_fd, const std::string& request) {
         
         auto username = auth_manager_->get_username(token);
         auto display_name = auth_manager_->get_display_name(token);
+        auto roles = auth_manager_->get_roles(token);
         std::string response;
-        if (username && display_name) {
-            response = "USER " + *username + " " + *display_name + "\n";
+        if (username && display_name && roles) {
+            // Join roles with semicolons
+            std::string roles_str;
+            for (size_t i = 0; i < roles->size(); ++i) {
+                if (i > 0) roles_str += ";";
+                roles_str += (*roles)[i];
+            }
+            response = "USER " + *username + " " + *display_name + " " + roles_str + "\n";
         } else {
             response = "NOTFOUND\n";
         }

@@ -24,6 +24,7 @@ private:
     // Connection state
     bool connected_;
     std::string username_;
+    std::string token_;
     
     // Screen state
     Screen current_screen_;
@@ -45,6 +46,9 @@ public:
     
     void set_username(const std::string& username);
     std::string get_username() const;
+    
+    void set_token(const std::string& token);
+    std::string get_token() const;
     
     // Screen state
     void set_screen(Screen screen);
