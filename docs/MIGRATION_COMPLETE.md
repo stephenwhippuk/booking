@@ -304,3 +304,200 @@ All UIs append message to chat window
 **Status: Production Ready**
 
 The new architecture solves all the blocking/deadlock issues while being more maintainable, testable, and scalable.
+
+---
+
+## Recent Enhancements (Roles & Protocol)
+
+### 1. User Roles System ✅
+Added `std::vector<std::string> roles` to User struct enabling multi-role assignment:
+- Users can have multiple roles (e.g., ["user", "admin"])
+- Propagated through AuthToken and UserInfo structures
+- Persisted in database
+
+**Files Changed:**
+- `lib/auth/include/auth/AuthManager.h` - Added `get_roles()` method
+- `lib/auth/include/auth/AuthToken.h` - Added roles field to AuthToken struct
+- `lib/auth/include/auth/AuthClient.h` - Added roles to UserInfo
+- `lib/auth/src/FileUserRepository.cpp` - Updated JSON serialization
+
+### 2. CSV to JSON Database Migration ✅
+Replaced comma-separated values with JSON format for better structure:
+
+**Before (CSV):**
+```
+alice|hash1|Alice|user
+john|hash2|John|user;moderator
+```
+
+**After (JSON - users.json):**
+```json
+{
+  "users": [
+    {
+      "username": "alice",
+      "password_hash": "hash1",
+      "display_name": "Alice",
+      "roles": ["user"]
+    },
+    {
+      "username": "john",
+      "password_hash": "hash2",
+      "display_name": "John",
+      "roles": ["user", "moderator"]
+    }
+  ]
+}
+```
+
+**Benefits:**
+- Type safety with JSON schema
+- Easier to extend (new fields don't break parsing)
+- Better tooling support
+- Human-readable for debugging
+
+**Implementation:**
+- Used `nlohmann/json` library (v3.11.3, FetchContent)
+- `FileUserRepository::load_from_file()` parses JSON
+- `FileUserRepository::save_to_file()` serializes to JSON
+- Removed escape_csv/unescape_csv functions
+
+### 3. Plain Text to JSON Network Protocol ✅
+Replaced delimited text protocol with type-safe JSON messages:
+
+**Before (Plain Text):**
+```
+AUTH alice secret123
+JOIN_ROOM:General
+CHAT_MESSAGE:Hello
+ROOM_LIST\nGeneral\nRandom
+```
+
+**After (JSON):**
+```json
+{
+  "header": {
+    "timestamp": "2024-01-01T12:00:00Z",
+    "token": "eyJhbGc..."
+  },
+  "body": {
+    "type": "AUTH",
+    "data": {
+      "username": "alice",
+      "password": "secret123"
+    }
+  }
+}
+```
+
+**Implementation:**
+- Created `lib/common/include/common/NetworkMessage.h`
+- Header: `{timestamp, token}` (ISO 8601 timestamps)
+- Body: `{type, data}` (JSON payload)
+- 11 factory methods for type-safe message creation
+- Serialization: JSON + newline delimiter for framing
+- Deserialization: Parse JSON, validate structure
+
+**Factory Methods:**
+```cpp
+// Client → Server
+NetworkMessage::create_auth(username, password);
+NetworkMessage::create_join_room(token, room_name);
+NetworkMessage::create_create_room(token, room_name);
+NetworkMessage::create_leave(token);
+NetworkMessage::create_chat_message(token, content);
+NetworkMessage::create_quit(token);
+
+// Server → Client
+NetworkMessage::create_error(message, details);
+NetworkMessage::create_room_joined(room_name, participants);
+NetworkMessage::create_room_list(rooms);
+NetworkMessage::create_participant_list(participants);
+NetworkMessage::create_broadcast_message(sender, content);
+```
+
+**Files Updated:**
+- `lib/common/CMakeLists.txt` - Header-only library
+- `lib/common/include/common/NetworkMessage.h` - Protocol layer
+- `src/client/ApplicationManager.cpp` - Parse JSON responses
+- `src/server/ClientManager.cpp` - Parse JSON, send JSON
+- `CMakeLists.txt` - nlohmann/json FetchContent
+
+### 4. Three-Server Architecture ✅
+Separated authentication and chat into independent services:
+
+**Auth Server (port 3001):**
+- Token generation and validation
+- User database (JSON format)
+- Role lookup
+- 30-second token cache
+
+**Chat Server (port 3000):**
+- Room management
+- Member tracking
+- Message broadcasting
+- Per-message token validation
+
+**Client:**
+- Unchanged queue-based architecture
+- Connects to both servers
+- JSON message protocol
+- Automatic token handling
+
+---
+
+## Build & Dependencies
+
+### CMakeLists.txt Updates
+```cmake
+# Added nlohmann/json (auto-downloaded)
+FetchContent_Declare(json ...)
+FetchContent_MakeAvailable(json)
+
+# Added common library
+add_subdirectory(lib/common)
+
+# Updated targets
+target_link_libraries(client_lib PRIVATE common_lib)
+target_link_libraries(server PRIVATE common_lib)
+target_link_libraries(tests PRIVATE common_lib)
+```
+
+### New Dependencies
+- C++20 compiler
+- nlohmann/json: v3.11.3 (FetchContent)
+- Google Test (FetchContent)
+- ncurses (system library)
+
+---
+
+## Build Status ✅
+
+```
+All 8 targets built successfully:
+✅ gtest
+✅ ncurses_ui (lib/ui)
+✅ auth_lib (lib/auth)
+✅ auth_server
+✅ server
+✅ client
+✅ tests (40+ unit tests)
+✅ gmock_main
+```
+
+No compilation errors. All libraries linked correctly.
+
+---
+
+## Integration Complete
+
+✅ Auth server validates tokens
+✅ Chat server receives JSON messages
+✅ Client sends/receives JSON
+✅ Database persists as JSON with roles
+✅ Three-server architecture operational
+✅ Build system manages all dependencies
+
+**Status: Ready for Runtime Testing**
+
+The system now features modern C++20, structured JSON data, role-based users, distributed authentication, and type-safe protocol messages.

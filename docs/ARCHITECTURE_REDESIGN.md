@@ -316,7 +316,129 @@ private:
 **No More Blocking**: UI continues rendering foyer while waiting for response
 ---
 
-### 4. Application State
+## 4. NetworkMessage Protocol Layer
+
+### Overview
+Above the raw TCP transport layer sits the `NetworkMessage` abstraction, which implements JSON-based message protocol with type-safe factory methods.
+
+### Architecture Position
+
+```
+┌───────────────────────────────────────────────────────────┐
+│                    Application Thread                     │
+│  ┌────────────────────────────────────────────────────┐   │
+│  │  ApplicationManager                                │   │
+│  │  - Parse NetworkMessage JSON                       │   │
+│  │  - Business logic                                  │   │
+│  │  - Send via NetworkMessage::create_*()            │   │
+│  └────────────────────────────────────────────────────┘   │
+└───────────────────────────────────────────────────────────┘
+                         ▲
+                         │ JSON strings with
+                         │ newline delimiter
+                         │
+┌───────────────────────────────────────────────────────────┐
+│                   NetworkMessage Layer                    │
+│  ┌────────────────────────────────────────────────────┐   │
+│  │  - Header: {timestamp, token}                      │   │
+│  │  - Body: {type, data}                              │   │
+│  │  - Serialization: JSON → newline-delimited string │   │
+│  │  - Deserialization: string → JSON parsed          │   │
+│  └────────────────────────────────────────────────────┘   │
+└───────────────────────────────────────────────────────────┘
+                         ▲
+                         │ Raw bytes
+                         │
+┌───────────────────────────────────────────────────────────┐
+│                    Network Thread                         │
+│  - TCP send/receive                                       │
+│  - No protocol knowledge                                  │
+└───────────────────────────────────────────────────────────┘
+```
+
+### Message Structure
+
+```cpp
+struct NetworkMessage {
+    struct Header {
+        std::string timestamp;  // ISO 8601
+        std::string token;      // Optional auth token
+    };
+    
+    struct Body {
+        std::string type;       // Message type identifier
+        nlohmann::json data;    // Type-specific payload
+    };
+    
+    Header header;
+    Body body;
+    
+    // Factory methods for client → server messages
+    static NetworkMessage create_auth(const std::string& username, 
+                                      const std::string& password);
+    static NetworkMessage create_join_room(const std::string& token,
+                                          const std::string& room_name);
+    static NetworkMessage create_create_room(const std::string& token,
+                                            const std::string& room_name);
+    // ... etc
+    
+    // Factory methods for server responses
+    static NetworkMessage create_error(const std::string& message);
+    static NetworkMessage create_room_joined(const std::string& room_name,
+                                            const std::vector<std::string>& participants);
+    
+    // Serialization
+    std::string serialize() const;  // Returns JSON + newline
+    
+    // Deserialization
+    static NetworkMessage deserialize(const std::string& json_string);
+};
+```
+
+### Message Types
+
+| Type | Direction | Purpose |
+|------|-----------|---------|
+| AUTH | C→S | Authenticate user with credentials |
+| JOIN_ROOM | C→S | Join existing chat room |
+| CREATE_ROOM | C→S | Create and join new room |
+| LEAVE | C→S | Leave current room |
+| CHAT_MESSAGE | C→S | Send chat message |
+| QUIT | C→S | Disconnect |
+| ROOM_JOINED | S→C | Room join successful |
+| LEFT_ROOM | S→C | Left room successfully |
+| ROOM_LIST | S→C | List of available rooms |
+| PARTICIPANT_LIST | S→C | Current room members |
+| MESSAGE | S→C | Broadcast chat message |
+| ERROR | S→C | Error response |
+
+See [NETWORK_PROTOCOL.md](NETWORK_PROTOCOL.md) for complete message format documentation.
+
+### Protocol Benefits
+
+**Type Safety**:
+- Factory methods prevent malformed messages
+- JSON schema prevents invalid fields
+- Compile-time checking catches protocol errors
+
+**Extensibility**:
+- Adding new message type: Add factory method + type string
+- No changes to serialization layer needed
+- Forward/backward compatible with new fields
+
+**Debuggability**:
+- JSON is human-readable
+- Newline framing makes logs clear
+- Can log/replay messages easily
+
+**Language Independence**:
+- JSON standard across all languages
+- Network protocol documented separately
+- Could implement server in different language
+
+---
+
+## 4. Application State
 
 **Purpose**: Single source of truth for app state, thread-safe access
 

@@ -1,6 +1,18 @@
 # Booking Chat System
 
-A multi-threaded chat server and client application with a queue-based architecture for complete thread isolation.
+A multi-threaded chat server and client application with distributed authentication, role-based access control, and JSON-based network protocol.
+
+## Features
+
+✅ **Three-Server Architecture**: Separate auth server, chat server, and client  
+✅ **Token-Based Authentication**: 60-minute expiration with per-message validation  
+✅ **User Roles**: Support for multiple roles per user (user, moderator, admin, etc.)  
+✅ **JSON Database**: User data stored in JSON format with roles array  
+✅ **JSON Network Protocol**: Type-safe messaging with NetworkMessage abstraction  
+✅ **Queue-Based Architecture**: Pure message-passing with three independent threads  
+✅ **Room Management**: Create rooms, join/leave, member tracking, broadcast messaging  
+✅ **Component-Based UI**: Reusable ncurses widget library  
+✅ **Thread Safety**: Lock-free queues, single-threaded state management  
 
 ## Screenshots
 
@@ -13,61 +25,102 @@ A multi-threaded chat server and client application with a queue-based architect
 ### Chatroom with Member List
 ![Chatroom](docs/images/chatroom.png)
 
-## Architecture
+## System Architecture
 
-The system uses a **pure message-passing architecture** with three independent threads communicating through lock-free queues:
+The application consists of three independent servers communicating via JSON over TCP:
 
 ```
-Network Thread ←→ Application Thread ←→ UI Thread
-   (TCP I/O)      (Business Logic)     (ncurses)
+┌─────────────────┐    tokens      ┌──────────────────┐    JSON msgs    ┌──────────────────────┐
+│  Auth Server    │◀──register────▶│  Chat Server     │◀──────────────▶│  Client (ncurses UI) │
+│  (port 3001)    │    validate    │  (port 3000)     │                │  (queue-based)       │
+│  - Token mgmt   │    roles       │  - Room mgmt     │                │  - Network thread    │
+│  - User DB      │                │  - Broadcasting  │                │  - App thread        │
+│  - Role lookup  │                │  - Persistence   │                │  - UI thread         │
+└─────────────────┘                └──────────────────┘                └──────────────────────┘
 ```
 
-See [ARCHITECTURE_REDESIGN.md](docs/ARCHITECTURE_REDESIGN.md) for detailed design documentation.
+See [NETWORK_PROTOCOL.md](docs/NETWORK_PROTOCOL.md) for protocol details and [ARCHITECTURE_REDESIGN.md](docs/ARCHITECTURE_REDESIGN.md) for design documentation.
 
 ## Components
 
-### Client
-- **NetworkManager**: Pure TCP transport layer
+### Authentication Server (auth_server)
+- **AuthManager**: Token generation and validation
+- **AuthToken**: Token structure with username, roles, expiration
+- **FileUserRepository**: JSON-based user database persistence
+- **AuthServer**: TCP server on port 3001
+
+### Chat Server (server)
+- **ServerSocket**: TCP server management on port 3000
+- **ClientManager**: Per-client session handling and protocol parsing
+- **ChatRoom**: Room state, member tracking, message broadcasting
+- **NetworkMessage**: JSON message protocol layer
+
+### Client (client)
+- **NetworkManager**: TCP transport layer with queue integration
 - **ApplicationManager**: Protocol parsing and business logic
 - **ApplicationState**: Single-threaded state management
-- **UIManager**: ncurses presentation layer with component library
-- **ThreadSafeQueue**: Lock-free queue for inter-thread communication
-- **UI Components**: Widget-based UI library (Window, TextInput, Menu, Label, ListBox)
+- **UIManager**: ncurses presentation layer
+- **UI Components**: Widget library (Window, TextInput, Menu, Label, ListBox, MessageBox)
+- **ThreadSafeQueue**: Lock-free inter-thread communication
 
-### Server
-- **ServerSocket**: TCP server management
-- **ClientManager**: Client connection handling
-- **ChatRoom**: Room and message management with member tracking
+## Dependencies
+
+- C++20 compiler (gcc 11+, clang 13+)
+- CMake 3.20+
+- ncurses development library
+- nlohmann/json (automatically fetched via CMake)
+- GoogleTest (automatically fetched for tests)
+
+### Installing Dependencies
+
+**Debian/Ubuntu:**
+```bash
+sudo apt-get install build-essential cmake libncurses-dev
+```
+
+**macOS:**
+```bash
+brew install cmake ncurses
+```
 
 ## Building
 
 ```bash
 mkdir -p build && cd build
 cmake ..
-make
+make -j$(nproc)
 ```
 
 Executables:
-- `build/client` - Chat client
-- `build/server` - Chat server
-- `build/tests` - Unit tests (35 tests)
+- `build/auth_server` - Authentication server (port 3001)
+- `build/server` - Chat server (port 3000)
+- `build/client` - Chat client (ncurses UI)
+- `build/tests` - Unit tests (40+ tests)
 
 ## Running
 
-### Start Server
+### Terminal 1: Start Auth Server
 ```bash
-./build/server
+./build/auth_server
+# Output: Server listening on port 3001
 ```
 
-### Start Client
+### Terminal 2: Start Chat Server
+```bash
+./build/server
+# Output: Server listening on port 3000
+```
+
+### Terminal 3 (and more): Start Client(s)
 ```bash
 ./build/client
 ```
 
-Or use the test script:
-```bash
-./test_new_client.sh
-```
+### Test Users (predefined in users.json)
+- **alice** / password `alice123` - Role: user
+- **David** / password `david456` - Role: user
+- **John** / password `john789` - Roles: user, moderator
+- **Stephen** / password `stephen123` - Roles: user, admin
 
 ## Testing
 
@@ -126,28 +179,43 @@ Test coverage:
 .
 ├── src/
 │   ├── client/
-│   │   ├── client.cpp          # Main client entry point
-│   │   ├── NetworkManager.*    # TCP transport layer
-│   │   ├── ApplicationManager.* # Business logic layer
-│   │   ├── ApplicationState.*   # State management
-│   │   └── UIManager.*         # Presentation layer
+│   │   ├── client.cpp                 # Main client entry
+│   │   ├── NetworkManager.*           # TCP transport
+│   │   ├── ApplicationManager.*       # Business logic
+│   │   ├── ApplicationState.*         # State mgmt
+│   │   ├── UIManager.*                # UI rendering
+│   │   └── ThreadSafeQueue.h          # Lock-free queue
 │   ├── server/
-│   │   ├── server.cpp          # Main server entry point
-│   │   ├── ChatRoom.*          # Room management
-│   │   ├── ClientManager.*     # Client handling
-│   │   └── ServerSocket.*      # Server TCP socket
-│   ├── ThreadSafeQueue.h       # Lock-free queue template
-│   ├── UICommand.h             # UI command structures
-│   └── RoomInfo.h              # Shared data structures
+│   │   ├── server.cpp                 # Main server entry
+│   │   ├── ChatRoom.*                 # Room management
+│   │   ├── ClientManager.*            # Client handling
+│   │   └── ServerSocket.*             # TCP server
+│   ├── auth_server.cpp                # Auth server main
+│   └── RoomInfo.h                     # Shared data
 ├── lib/
-│   └── ui/                     # ncurses UI component library
+│   ├── auth/
+│   │   ├── include/auth/
+│   │   │   ├── AuthManager.h          # Token mgmt
+│   │   │   ├── AuthToken.h            # Token struct (roles field)
+│   │   │   ├── AuthClient.h           # Client library
+│   │   │   └── AuthServer.h           # Server impl
+│   │   └── src/
+│   │       ├── AuthManager.cpp
+│   │       ├── AuthToken.cpp
+│   │       ├── FileUserRepository.cpp # JSON storage
+│   │       ├── AuthServer.cpp
+│   │       └── AuthClient.cpp
+│   ├── common/
+│   │   └── include/common/
+│   │       └── NetworkMessage.h       # JSON protocol layer
+│   └── ui/
 │       ├── include/ui/
-│       │   ├── Widget.h        # Base widget class
-│       │   ├── Window.h        # Container with border
-│       │   ├── TextInput.h     # Input field with cursor
-│       │   ├── Menu.h          # Selection list
-│       │   ├── Label.h         # Static text
-│       │   └── ListBox.h       # Read-only list
+│       │   ├── Widget.h               # Base widget
+│       │   ├── Window.h               # Container
+│       │   ├── TextInput.h            # Input field
+│       │   ├── Menu.h                 # Selection list
+│       │   ├── Label.h                # Static text
+│       │   └── ListBox.h              # Read-only list
 │       └── src/
 │           └── [implementations]
 ├── tests/
@@ -155,10 +223,15 @@ Test coverage:
 │   ├── NetworkManagerTest.cpp
 │   └── ApplicationManagerTest.cpp
 ├── docs/
-│   ├── images/                 # Screenshots
-│   ├── ARCHITECTURE_REDESIGN.md
-│   └── MIGRATION_COMPLETE.md
-├── CMakeLists.txt
+│   ├── images/
+│   ├── ARCHITECTURE_REDESIGN.md       # Full design doc
+│   ├── NETWORK_PROTOCOL.md            # Protocol spec
+│   ├── MIGRATION_COMPLETE.md          # Migration notes
+│   ├── THREADING_FIXES.md             # Threading details
+│   ├── spec.md                        # Feature spec
+│   └── SERVER_UPDATES.md              # Server changes
+├── users.json                          # User database (JSON)
+├── CMakeLists.txt                      # Build config
 └── README.md
 ```
 

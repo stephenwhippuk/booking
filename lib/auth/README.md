@@ -1,61 +1,166 @@
 # Authentication Library
 
-Independent authentication server library providing token-based authentication.
+Independent authentication server library providing token-based authentication with user roles and JSON persistence.
 
 ## Features
 
-- Token-based authentication
-- User registration
-- Token validation
+- Token-based authentication with 60-minute expiration
+- Role-based user system (multiple roles per user)
+- User registration and management
+- Token validation (with 30-second caching)
 - Token revocation (logout)
-- Automatic token expiration
+- JSON-based user database persistence
+- Per-message token validation
 - Thread-safe operations
 
 ## Architecture
 
 The auth library consists of:
-- **AuthServer**: TCP server handling authentication requests
-- **AuthManager**: Core authentication logic and token management
-- **AuthToken**: Token data structure with expiration
+- **AuthServer**: TCP server handling authentication requests (port 3001)
+- **AuthManager**: Core authentication logic, token management, and caching
+- **AuthToken**: Token structure containing username, display_name, roles, timestamps
+- **FileUserRepository**: JSON-based persistent user storage
+- **AuthClient**: Client library for connecting to auth server
 
-## Protocol
+## Data Format
 
-The auth server uses a simple text-based protocol over TCP:
+### User Database (users.json)
 
-### Commands
-
-**Authenticate User:**
-```
-Request:  AUTH username password
-Response: OK <token>          (success)
-          FAILED              (invalid credentials)
-```
-
-**Validate Token:**
-```
-Request:  VALIDATE <token>
-Response: VALID               (token is valid)
-          INVALID             (token expired or invalid)
-```
-
-**Get Username from Token:**
-```
-Request:  GETUSER <token>
-Response: USER <username>     (token valid)
-          NOTFOUND            (token invalid)
+```json
+{
+  "users": [
+    {
+      "username": "alice",
+      "password_hash": "...",
+      "display_name": "Alice",
+      "roles": ["user"]
+    },
+    {
+      "username": "john",
+      "password_hash": "...",
+      "display_name": "John Doe",
+      "roles": ["user", "moderator"]
+    }
+  ]
+}
 ```
 
-**Register New User:**
-```
-Request:  REGISTER username password
-Response: REGISTERED          (success)
-          EXISTS              (username taken)
+### AuthToken Structure
+
+```cpp
+struct AuthToken {
+  std::string token;                    // Unique token ID
+  std::string username;                 // User login
+  std::string display_name;             // Display name
+  std::vector<std::string> roles;       // User roles (e.g., ["user", "admin"])
+  std::chrono::system_clock::time_point issued_at;
+  std::chrono::system_clock::time_point expires_at;
+  
+  bool is_valid() const {
+    return std::chrono::system_clock::now() < expires_at;
+  }
+};
 ```
 
-**Revoke Token (Logout):**
+## Network Protocol
+
+Messages are JSON objects with the following structure:
+
+```json
+{
+  "header": {
+    "timestamp": "2024-01-01T12:00:00Z",
+    "token": "auth_token_or_empty"
+  },
+  "body": {
+    "type": "AUTH|VALIDATE|GET_USER_INFO|etc",
+    "data": { /* type-specific fields */ }
+  }
+}
 ```
-Request:  REVOKE <token>
-Response: REVOKED
+
+### Message Types
+
+**Authenticate (AUTH):**
+```json
+{
+  "body": {
+    "type": "AUTH",
+    "data": {
+      "username": "alice",
+      "password": "secret123"
+    }
+  }
+}
+```
+
+Response (success):
+```json
+{
+  "body": {
+    "type": "AUTH_SUCCESS",
+    "data": {
+      "token": "eyJhbGc...",
+      "username": "alice",
+      "display_name": "Alice",
+      "roles": ["user"]
+    }
+  }
+}
+```
+
+**Validate Token (per-message validation):**
+```json
+{
+  "header": {
+    "token": "eyJhbGc..."
+  },
+  "body": {
+    "type": "VALIDATE_TOKEN",
+    "data": {}
+  }
+}
+```
+
+Response:
+```json
+{
+  "body": {
+    "type": "TOKEN_VALID",
+    "data": {
+      "username": "alice",
+      "roles": ["user"],
+      "expires_at": "2024-01-02T12:00:00Z"
+    }
+  }
+}
+```
+
+**Get User Info:**
+```json
+{
+  "header": {
+    "token": "eyJhbGc..."
+  },
+  "body": {
+    "type": "GET_USER_INFO",
+    "data": {}
+  }
+}
+```
+
+Response:
+```json
+{
+  "body": {
+    "type": "USER_INFO",
+    "data": {
+      "username": "alice",
+      "display_name": "Alice",
+      "roles": ["user"]
+    }
+  }
+}
 ```
 
 ## Usage
@@ -70,33 +175,44 @@ Response: REVOKED
 ### Example Client Code
 
 ```cpp
-#include "auth/AuthManager.h"
+#include "auth/AuthClient.h"
+#include "auth/AuthToken.h"
 
-AuthManager auth;
-
-// Register user
-auth.register_user("alice", "secret123");
+// Create client connection
+AuthClient auth_client("localhost", 3001);
 
 // Authenticate
-AuthToken token = auth.authenticate("alice", "secret123");
-if (token.is_valid) {
-    std::cout << "Token: " << token.token << "\n";
+NetworkMessage auth_msg = NetworkMessage::create_auth("alice", "secret123");
+auto response = auth_client.send_request(auth_msg);
+
+if (response.body.type == "AUTH_SUCCESS") {
+  std::string token = response.body.data["token"];
+  std::string username = response.body.data["username"];
+  auto roles = response.body.data["roles"];
+  std::cout << "Logged in as " << username << " with roles: ";
+  for (const auto& role : roles) {
+    std::cout << role << " ";
+  }
 }
 
-// Validate token
-if (auth.validate_token(token.token)) {
-    std::cout << "Token is valid\n";
-}
+// Validate token on subsequent messages
+NetworkMessage msg = NetworkMessage::create_join_room(token, "General");
+auto result = auth_client.send_request(msg);
 
-// Get username
-auto username = auth.get_username(token.token);
-if (username) {
-    std::cout << "User: " << *username << "\n";
-}
-
-// Revoke token
-auth.revoke_token(token.token);
+// Get user info
+NetworkMessage info_msg = NetworkMessage::create_info(token);
+auto user_info = auth_client.send_request(info_msg);
 ```
+
+## Performance
+
+- **Token Validation**: 30-second cache for repeated validations
+- **Database**: JSON file format enables atomic writes
+- **Concurrency**: Per-client token validation with thread-safe cache
+
+## Testing
+
+User database comes pre-populated with test accounts (see users.json).
 
 ## Integration
 
