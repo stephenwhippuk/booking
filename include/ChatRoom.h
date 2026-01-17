@@ -38,4 +38,5 @@ public:
     void send_history_to_client(int client_fd);
     
     std::vector<std::string> get_client_names() const;
+    std::vector<int> get_client_fds() const;
 };

@@ -28,6 +28,7 @@ private:
     void handle_room_chat(int client_fd, ClientInfo& client_info);
     void send_room_list(int client_fd);
     void broadcast_room_list_to_foyer();
+    void broadcast_member_list_to_room(const std::string& room_name);
     bool create_room(const std::string& room_name);
     bool join_room(int client_fd, ClientInfo& client_info, const std::string& room_name);
     void leave_room(int client_fd, ClientInfo& client_info);

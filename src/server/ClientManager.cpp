@@ -85,6 +85,49 @@ void ClientManager::broadcast_room_list_to_foyer() {
     }
 }
 
+void ClientManager::broadcast_member_list_to_room(const std::string& room_name) {
+    std::shared_ptr<ChatRoom> room;
+    {
+        std::lock_guard<std::mutex> lock(rooms_mutex_);
+        auto it = chat_rooms_.find(room_name);
+        if (it == chat_rooms_.end()) {
+            return;
+        }
+        room = it->second;
+    }
+    
+    // Get list of members
+    auto members = room->get_client_names();
+    
+    // Build MEMBER_LIST message
+    std::string member_list_msg = "MEMBER_LIST:";
+    for (size_t i = 0; i < members.size(); ++i) {
+        if (i > 0) member_list_msg += ",";
+        member_list_msg += members[i];
+    }
+    member_list_msg += "\n";
+    
+    // DEBUG: Log what we're broadcasting
+    FILE* debug = fopen("/tmp/server_member_list.log", "a");
+    if (debug) {
+        fprintf(debug, "[SERVER] Broadcasting to room '%s': %s", room_name.c_str(), member_list_msg.c_str());
+        fprintf(debug, "[SERVER] Found %zu members\n", members.size());
+    }
+    
+    // Send to all clients in the room - get FDs directly from room
+    auto client_fds = room->get_client_fds();
+    for (int fd : client_fds) {
+        ssize_t sent = send(fd, member_list_msg.c_str(), member_list_msg.length(), MSG_NOSIGNAL);
+        if (debug) {
+            fprintf(debug, "[SERVER] Sent to client fd=%d, result=%zd\n", fd, sent);
+        }
+    }
+    
+    if (debug) {
+        fclose(debug);
+    }
+}
+
 bool ClientManager::create_room(const std::string& room_name) {
     std::lock_guard<std::mutex> lock(rooms_mutex_);
     if (chat_rooms_.find(room_name) != chat_rooms_.end()) {
@@ -118,6 +161,9 @@ bool ClientManager::join_room(int client_fd, ClientInfo& client_info, const std:
     
     // Notify foyer clients of room count change
     broadcast_room_list_to_foyer();
+    
+    // Broadcast updated member list to all in room
+    broadcast_member_list_to_room(room_name);
     
     {
         std::lock_guard<std::mutex> lock(cout_mutex_);

@@ -11,6 +11,7 @@ set(UI_SOURCES
     src/TextInput.cpp
     src/Menu.cpp
     src/Label.cpp
+    src/ListBox.cpp
 )
 
 # Library header files
@@ -20,6 +21,7 @@ set(UI_HEADERS
     include/ui/TextInput.h
     include/ui/Menu.h
     include/ui/Label.h
+    include/ui/ListBox.h
     include/ui/Types.h
 )
 

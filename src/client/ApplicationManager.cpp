@@ -101,6 +101,13 @@ bool ApplicationManager::is_in_room() const {
 }
 
 void ApplicationManager::process_network_message(const std::string& message) {
+    // DEBUG: Log all received messages
+    FILE* debug = fopen("/tmp/client_messages.log", "a");
+    if (debug) {
+        fprintf(debug, "[CLIENT] Received message: '%s'\n", message.c_str());
+        fclose(debug);
+    }
+    
     // Handle connection errors
     if (message == "SERVER_DISCONNECTED\n" || message == "CONNECTION_ERROR\n") {
         state_.set_connected(false);
@@ -181,6 +188,43 @@ void ApplicationManager::process_network_message(const std::string& message) {
             pos = end + 1;  // Move past this message
         } else {
             break;  // No complete message found
+        }
+    }
+    
+    // Handle member list
+    if (message.find("MEMBER_LIST:") != std::string::npos) {
+        size_t member_pos = message.find("MEMBER_LIST:");
+        size_t start = member_pos + 12;  // Length of "MEMBER_LIST:"
+        size_t end = message.find('\n', start);
+        if (end != std::string::npos) {
+            std::string member_data = message.substr(start, end - start);
+            
+            FILE* debug = fopen("/tmp/client_messages.log", "a");
+            if (debug) {
+                fprintf(debug, "[CLIENT] Received MEMBER_LIST, raw data: '%s'\n", member_data.c_str());
+            }
+            
+            // Parse comma-separated list
+            std::vector<std::string> participants;
+            std::stringstream ss(member_data);
+            std::string name;
+            while (std::getline(ss, name, ',')) {
+                if (!name.empty()) {
+                    participants.push_back(name);
+                }
+            }
+            
+            if (debug) {
+                fprintf(debug, "[CLIENT] Parsed %zu participants: ", participants.size());
+                for (const auto& p : participants) {
+                    fprintf(debug, "'%s' ", p.c_str());
+                }
+                fprintf(debug, "\n");
+                fclose(debug);
+            }
+            
+            ui_commands_.push(UICommand(UICommandType::UPDATE_PARTICIPANTS,
+                ParticipantsData{participants}));
         }
     }
     

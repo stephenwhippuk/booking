@@ -8,6 +8,7 @@
 #include <ui/TextInput.h>
 #include <ui/Menu.h>
 #include <ui/Label.h>
+#include <ui/ListBox.h>
 #include <ncurses.h>
 #include <string>
 #include <vector>
@@ -60,6 +61,7 @@ private:
     ui::MenuPtr room_menu_;
     ui::TextInputPtr chat_input_;
     ui::WindowPtr chat_display_;
+    ui::ListBoxPtr member_list_box_;
     ui::LabelPtr help_label_;
     ui::LabelPtr title_label_;
     

@@ -1,6 +1,7 @@
 #include "UIManager.h"
 #include <chrono>
 #include <algorithm>
+#include <iostream>
 
 using namespace std::chrono_literals;
 
@@ -179,12 +180,20 @@ void UIManager::setup_chatroom_ui() {
     main_window_ = std::make_shared<ui::Window>(0, 0, max_x, max_y);
     main_window_->set_bordered(false);
     
-    // Create chat display window
-    chat_display_ = std::make_shared<ui::Window>(0, 0, max_x, max_y - 3);
+    // Member list width (right side)
+    int member_list_width = 20;
+    
+    // Create chat display window (left side, leaving space for member list)
+    chat_display_ = std::make_shared<ui::Window>(0, 0, max_x - member_list_width - 1, max_y - 3);
     chat_display_->set_bordered(true);
     chat_display_->set_title(" " + current_room_ + " ");
     
-    // Create chat input (coordinates relative to main window)
+    // Create member list box (right side)
+    member_list_box_ = std::make_shared<ui::ListBox>(max_x - member_list_width, 0, member_list_width, max_y - 3);
+    member_list_box_->set_bordered(true);
+    member_list_box_->set_title(" Members ");
+    
+    // Create chat input (coordinates relative to main window, full width)
     chat_input_ = std::make_shared<ui::TextInput>(1, max_y - 3, max_x - 2);
     chat_input_->set_label(">");
     chat_input_->set_focus(true);
@@ -204,6 +213,7 @@ void UIManager::setup_chatroom_ui() {
     });
     
     main_window_->add_child(chat_display_);
+    main_window_->add_child(member_list_box_);
     main_window_->add_child(chat_input_);
 }
 
@@ -309,6 +319,14 @@ void UIManager::process_commands() {
             case UICommandType::UPDATE_PARTICIPANTS:
                 if (cmd.has_data()) {
                     participants_ = cmd.get<ParticipantsData>().participants;
+                    FILE* debug = fopen("/tmp/ui_participants.log", "a");
+                    if (debug) {
+                        fprintf(debug, "[UI] UPDATE_PARTICIPANTS received, count: %zu\n", participants_.size());
+                        for (const auto& p : participants_) {
+                            fprintf(debug, "[UI]   - '%s'\n", p.c_str());
+                        }
+                        fclose(debug);
+                    }
                 }
                 break;
                 
@@ -480,9 +498,35 @@ void UIManager::render_chatroom() {
         setup_chatroom_ui();
     }
     
+    // Debug: Always show participant info
+    mvprintw(0, 0, "P:%zu", participants_.size());
+    if (!participants_.empty()) {
+        for (size_t i = 0; i < std::min(participants_.size(), size_t(3)); ++i) {
+            mvprintw(i + 1, 0, "%s", participants_[i].c_str());
+        }
+    }
+    
     // Render chat input to stdscr first
     if (chat_input_) {
         chat_input_->render(stdscr);
+    }
+    
+    // Render member list box BEFORE staging stdscr
+    if (member_list_box_) {
+        member_list_box_->set_items(participants_);
+        member_list_box_->render(stdscr);
+    }
+    
+    // Position cursor on stdscr BEFORE staging if TextInput is focused
+    if (chat_input_ && chat_input_->has_focus()) {
+        int cursor_x = chat_input_->get_bounds().left() + 
+                      chat_input_->get_label().length() + 1 +
+                      (chat_input_->get_cursor_pos() - chat_input_->get_scroll_offset());
+        int cursor_y = chat_input_->get_bounds().top();
+        wmove(stdscr, cursor_y, cursor_x);
+        curs_set(1);  // Show cursor
+    } else {
+        curs_set(0);  // Hide cursor
     }
     
     // Stage stdscr as background
@@ -518,6 +562,12 @@ void UIManager::render_chatroom() {
             touchwin(win);
             wnoutrefresh(win);
         }
+    }
+    
+    // Render member list box (overlays stdscr on right side)
+    if (member_list_box_) {
+        member_list_box_->set_items(participants_);
+        member_list_box_->render(stdscr);
     }
     
     // Position cursor AFTER all windows staged, then re-stage stdscr
