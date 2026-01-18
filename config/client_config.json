@@ -1,0 +1,6 @@
+{
+  "auth_host": "127.0.0.1",
+  "auth_port": 3001,
+  "chat_host": "127.0.0.1",
+  "chat_port": 3000
+}

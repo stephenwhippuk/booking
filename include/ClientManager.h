@@ -29,6 +29,9 @@ private:
     std::mutex token_cache_mutex_;
     static constexpr int TOKEN_CACHE_SECONDS = 30;
 
+    std::string auth_host_;
+    int auth_port_;
+
     void remove_client(int client_fd);
     std::string request_client_name(int client_fd, const std::string& client_ip);
     bool validate_token(const std::string& token);
@@ -43,7 +46,7 @@ private:
     std::string get_client_name(int client_fd);
 
 public:
-    ClientManager();
+    ClientManager(const std::string& auth_host = "127.0.0.1", int auth_port = 3001);
     ~ClientManager();
 
     void handle_client(int client_fd, const std::string& client_ip);

@@ -35,6 +35,16 @@ void UIManager::init_ncurses() {
     nodelay(stdscr, TRUE);  // Non-blocking input
     keypad(stdscr, TRUE);
     curs_set(0);  // Hide cursor
+
+    // Initialize colors and set a blue background for the entire UI
+    if (has_colors()) {
+        start_color();
+        use_default_colors();
+        init_pair(1, COLOR_WHITE, COLOR_BLACK);      // default UI background
+        init_pair(2, COLOR_WHITE, COLOR_BLUE);      // popup/message box (darker tone handled via attrs)
+        bkgd(COLOR_PAIR(1));
+        refresh();
+    }
     
     ncurses_initialized_ = true;
 }
@@ -660,6 +670,13 @@ void UIManager::show_error_popup(const std::string& message) {
     int popup_x = (max_x - popup_width) / 2;
     
     WINDOW* popup = newwin(popup_height, popup_width, popup_y, popup_x);
+    
+    // Apply darker blue popup background
+    if (has_colors()) {
+        wbkgd(popup, COLOR_PAIR(2));
+        wattron(popup, COLOR_PAIR(2) | A_BOLD);
+    }
+    
     box(popup, 0, 0);
     mvwprintw(popup, 0, 2, " Error ");
     mvwprintw(popup, 2, 2, "%.*s", popup_width - 4, message.c_str());
@@ -684,6 +701,12 @@ void UIManager::show_create_room_dialog() {
     int popup_x = (max_x - popup_width) / 2;
     
     WINDOW* popup = newwin(popup_height, popup_width, popup_y, popup_x);
+    
+    // Apply darker blue popup background
+    if (has_colors()) {
+        wbkgd(popup, COLOR_PAIR(2));
+        wattron(popup, COLOR_PAIR(2) | A_BOLD);
+    }
     
     std::string room_name;
     bool done = false;

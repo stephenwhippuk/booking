@@ -14,12 +14,20 @@ ApplicationManager::ApplicationManager(
     ThreadSafeQueue<std::string>& network_outbound,
     ThreadSafeQueue<UICommand>& ui_commands,
     ThreadSafeQueue<std::string>& input_events,
-    NetworkManager* network_manager)
+    NetworkManager* network_manager,
+    const std::string& auth_host,
+    int auth_port,
+    const std::string& chat_host,
+    int chat_port)
     : network_inbound_(network_inbound)
     , network_outbound_(network_outbound)
     , ui_commands_(ui_commands)
     , input_events_(input_events)
     , network_manager_(network_manager)
+    , auth_host_(auth_host)
+    , auth_port_(auth_port)
+    , chat_host_(chat_host)
+    , chat_port_(chat_port)
     , running_(false)
     , in_room_(false)
 {
@@ -202,7 +210,7 @@ void ApplicationManager::process_input_event(const std::string& event) {
         std::string password = event_data.substr(second_colon + 1);
         
         // Authenticate with auth server
-        AuthClient auth_client("localhost", 3001);
+        AuthClient auth_client(auth_host_, auth_port_);
         AuthResult auth_result = auth_client.authenticate(username, password);
         
         if (!auth_result.success) {
@@ -214,7 +222,7 @@ void ApplicationManager::process_input_event(const std::string& event) {
         // Connect to chat server now that we have a token
         if (network_manager_) {
             std::string connect_error;
-            if (!network_manager_->connect("127.0.0.1", 3000, connect_error)) {
+            if (!network_manager_->connect(chat_host_, chat_port_, connect_error)) {
                 ui_commands_.push(UICommand(UICommandType::SHOW_ERROR,
                     ErrorData{"Failed to connect to chat server: " + connect_error}));
                 return;

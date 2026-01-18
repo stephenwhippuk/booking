@@ -6,14 +6,19 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <sstream>
+#include <fcntl.h>
+#include <errno.h>
+#include <chrono>
+#include <thread>
 
-AuthServer::AuthServer(int port)
+AuthServer::AuthServer(int port, const std::string& user_db_path)
     : port_(port)
+    , user_db_path_(user_db_path)
     , server_fd_(-1)
     , running_(false)
 {
     // Create file-based user repository
-    auto user_repository = std::make_shared<FileUserRepository>("users.json");
+    auto user_repository = std::make_shared<FileUserRepository>(user_db_path_);
     auth_manager_ = std::make_unique<AuthManager>(user_repository);
 }
 
@@ -57,6 +62,12 @@ void AuthServer::start() {
         server_fd_ = -1;
         return;
     }
+
+    // Make accept() non-blocking so shutdown can stop promptly
+    int flags = fcntl(server_fd_, F_GETFL, 0);
+    if (flags >= 0) {
+        fcntl(server_fd_, F_SETFL, flags | O_NONBLOCK);
+    }
     
     running_ = true;
     server_thread_ = std::make_unique<std::thread>(&AuthServer::server_loop, this);
@@ -91,22 +102,31 @@ void AuthServer::server_loop() {
     while (running_) {
         sockaddr_in client_addr{};
         socklen_t client_len = sizeof(client_addr);
-        
         int client_fd = accept(server_fd_, (struct sockaddr*)&client_addr, &client_len);
         if (client_fd < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                continue;
+            }
             if (running_) {
                 std::cerr << "Auth server accept failed\n";
             }
             continue;
         }
         
-        // Handle client in separate thread (for now, simple inline handling)
+        // Handle client inline; socket will time out if client stays silent
         handle_client(client_fd);
         close(client_fd);
     }
 }
 
 void AuthServer::handle_client(int client_fd) {
+    // Add a short receive timeout so shutdown isn't blocked by silent clients
+    timeval tv{};
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
     char buffer[4096];
     ssize_t bytes_read = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
     

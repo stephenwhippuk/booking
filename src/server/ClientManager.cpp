@@ -11,7 +11,9 @@
 
 constexpr int BUFFER_SIZE = 4096;
 
-ClientManager::ClientManager() {
+ClientManager::ClientManager(const std::string& auth_host, int auth_port)
+    : auth_host_(auth_host)
+    , auth_port_(auth_port) {
     // Create a default "General" room
     chat_rooms_["General"] = std::make_shared<ChatRoom>("General");
 }
@@ -54,7 +56,7 @@ bool ClientManager::validate_token(const std::string& token) {
     }
     
     // Validate with auth server
-    AuthClient auth_client("localhost", 3001);
+    AuthClient auth_client(auth_host_, auth_port_);
     bool valid = auth_client.validate_token(token);
     
     if (valid) {
@@ -95,7 +97,7 @@ std::string ClientManager::request_client_name(int client_fd, const std::string&
     std::string token = net_msg.header.token;
     
     // Validate token with auth server
-    AuthClient auth_client("localhost", 3001);
+    AuthClient auth_client(auth_host_, auth_port_);
     auto user_info = auth_client.get_user_info(token);
     
     if (!user_info) {
@@ -399,7 +401,7 @@ void ClientManager::handle_client(int client_fd, const std::string& client_ip) {
     std::string token = net_msg.header.token;
     
     // Validate token
-    AuthClient auth_client("localhost", 3001);
+    AuthClient auth_client(auth_host_, auth_port_);
     auto user_info = auth_client.get_user_info(token);
     
     if (!user_info) {

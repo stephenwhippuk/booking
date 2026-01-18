@@ -51,6 +51,12 @@ private:
     // State tracking for protocol
     bool in_room_;
 
+    // Connection settings
+    std::string auth_host_;
+    int auth_port_;
+    std::string chat_host_;
+    int chat_port_;
+
 public:
     /**
      * Constructor takes references to all queues
@@ -61,7 +67,11 @@ public:
         ThreadSafeQueue<std::string>& network_outbound,
         ThreadSafeQueue<UICommand>& ui_commands,
         ThreadSafeQueue<std::string>& input_events,
-        class NetworkManager* network_manager
+        class NetworkManager* network_manager,
+        const std::string& auth_host = "127.0.0.1",
+        int auth_port = 3001,
+        const std::string& chat_host = "127.0.0.1",
+        int chat_port = 3000
     );
     
     ~ApplicationManager();

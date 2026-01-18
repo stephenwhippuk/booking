@@ -2,6 +2,7 @@
 #include "ui/TextInput.h"
 #include "ui/Menu.h"
 #include "ui/Label.h"
+#include <ncurses.h>
 #include <algorithm>
 #include <fcntl.h>
 #include <unistd.h>
@@ -17,6 +18,11 @@ Window::Window(int x, int y, int width, int height)
     window_ = newwin(height, width, y, x);
     if (!window_) {
         window_ = stdscr;  // Fallback to standard screen
+    }
+
+    // Apply default background color (pair 1 set by UIManager)
+    if (has_colors()) {
+        wbkgd(window_, COLOR_PAIR(1));
     }
 }
 

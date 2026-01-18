@@ -33,6 +33,12 @@ void MessageBox::render(WINDOW* parent) {
     // Create window for message box
     WINDOW* box_win = derwin(parent, height_, width_, start_y, start_x);
     if (!box_win) return;
+
+    // Apply a dedicated popup color pair (configured in UIManager) for a darker blue tone
+    if (has_colors()) {
+        wbkgd(box_win, COLOR_PAIR(2));
+        wattron(box_win, COLOR_PAIR(2) | A_BOLD);
+    }
     
     // Draw border with title
     box(box_win, 0, 0);
@@ -56,6 +62,10 @@ void MessageBox::render(WINDOW* parent) {
     wattron(box_win, A_DIM);
     mvwprintw(box_win, height_ - 2, instr_x, "%s", instruction);
     wattroff(box_win, A_DIM);
+
+    if (has_colors()) {
+        wattroff(box_win, COLOR_PAIR(2) | A_BOLD);
+    }
     
     wrefresh(box_win);
     delwin(box_win);
